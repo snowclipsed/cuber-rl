@@ -199,5 +199,5 @@ def load_environment(**kwargs) -> vf.Environment:
     return RubiksCubeEnv(
         difficulties=kwargs.get('difficulties', ['easy', 'medium']),
         max_moves_per_turn=kwargs.get('max_moves_per_turn', 3),
-        max_episode_steps=kwargs.get('max_episode_steps', 20)
+        max_episode_steps=kwargs.get('max_episode_steps', 30)
     )
