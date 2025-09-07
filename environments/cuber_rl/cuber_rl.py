@@ -1,285 +1,203 @@
 import re
-import json
-import math
 import random
-from typing import List, Tuple
-
+import math
+from typing import Tuple, List, Optional, Dict
+import numpy as np
 import verifiers as vf
-from datasets import Dataset
-from verifiers.types import Messages, State
-from .solver import CubeSolver, generate_scramble
-from .move import parse_moves, apply_moves, validate_moves
-from .state import CubeState
+import magiccube
+import kociemba
 
-def calculate_progress_reward(initial_state, final_state, num_moves, solver=None):
-    """Reward for making progress toward solution"""
-    if num_moves == 0:
-        return 0
+# State Management
+class CubeState:
+    FACE_ORDER = ['U', 'L', 'F', 'R', 'B', 'D']
+    FACE_NAMES = {'U': 'TOP', 'L': 'LEFT', 'F': 'FRONT', 'R': 'RIGHT', 'B': 'BACK', 'D': 'BOTTOM'}
+    COLOR_MAP = {0: 'W', 1: 'O', 2: 'G', 3: 'R', 4: 'B', 5: 'Y'}
     
-    if not solver:
-        solver = CubeSolver()
+    def __init__(self, state_string: str = None):
+        if state_string:
+            self.faces = {}
+            for line in state_string.strip().split('\n'):
+                match = re.match(r'(\w+)\((\w)\): (\w{3}/\w{3}/\w{3})', line)
+                if match:
+                    face = match.group(2)
+                    colors = match.group(3).replace('/', '')
+                    self.faces[face] = colors
+        else:
+            self.faces = {f: self.COLOR_MAP[i] * 9 for i, f in enumerate(self.FACE_ORDER)}
     
-    initial_dist = solver.get_distance(initial_state)
-    final_dist = solver.get_distance(final_state)
+    def to_string(self) -> str:
+        return '\n'.join(f"{self.FACE_NAMES[f]}({f}): {self.faces[f][:3]}/{self.faces[f][3:6]}/{self.faces[f][6:9]}" 
+                        for f in self.FACE_ORDER)
     
-    # Normalize by moves taken to prevent single-move gaming
-    return (initial_dist - final_dist) / num_moves
+    def to_kociemba(self) -> str:
+        kociemba_order = ['U', 'R', 'F', 'D', 'L', 'B']
+        kociemba_colors = {'W': 'U', 'R': 'R', 'G': 'F', 'Y': 'D', 'O': 'L', 'B': 'B'}
+        return ''.join(kociemba_colors[self.faces[f][i]] for f in kociemba_order for i in range(9))
+    
+    def from_magiccube(self, cube: magiccube.Cube):
+        for i, face_key in enumerate(self.FACE_ORDER):
+            face_idx = ['U', 'L', 'F', 'R', 'B', 'D'].index(face_key)
+            face_colors = cube.get_face(face_key)
+            self.faces[face_key] = ''.join(self.COLOR_MAP[face_colors[r, c]] 
+                                          for r in range(3) for c in range(3))
+    
+    def is_solved(self) -> bool:
+        return all(len(set(colors)) == 1 for colors in self.faces.values())
+    
+    def __eq__(self, other) -> bool:
+        return self.faces == other.faces if isinstance(other, CubeState) else False
 
-def calculate_prediction_reward(predicted_state, actual_state, solver=None):
-    """Reward for accurate mental modeling"""
-    if predicted_state is None:
-        return 0
-    
-    if predicted_state == actual_state:
-        return 1.0
-    
-    if not solver:
-        solver = CubeSolver()
-    
-    # Negative distance normalized by max possible distance (~20)
-    distance = solver.get_distance(predicted_state, actual_state)
-    return -distance / 20.0
+# Move Operations
+def parse_moves(move_string: str) -> List[str]:
+    moves = re.findall(r"[UDLRFB][2']?", move_string.upper())
+    return [m.replace("'", "_prime") for m in moves]
 
-def calculate_total_reward(initial_state, final_state, moves, predicted_state, 
-                          progress_weight=0.7, prediction_weight=0.3, solver=None):
-    """Combine progress and prediction rewards"""
-    if not solver:
-        solver = CubeSolver()
-    
-    progress = calculate_progress_reward(initial_state, final_state, len(moves), solver)
-    prediction = calculate_prediction_reward(predicted_state, final_state, solver)
-    
-    return progress_weight * progress + prediction_weight * prediction
+def validate_moves(moves: List[str]) -> bool:
+    valid = set(['U', 'D', 'L', 'R', 'F', 'B'] + 
+                [f + s for f in 'UDLRFB' for s in ['2', '_prime']])
+    return all(m in valid for m in moves)
 
-def calculate_step_rewards(initial_state, moves, predicted_state, solver=None):
-    """All-in-one reward calculation for environment step"""
-    if not solver:
-        solver = CubeSolver()
+def apply_moves(state: CubeState, moves: List[str]) -> CubeState:
+    cube = magiccube.Cube(3)
+    # Set cube to match state
+    for face_key in state.FACE_ORDER:
+        face_idx = ['U', 'L', 'F', 'R', 'B', 'D'].index(face_key)
+        face_array = np.array([[state.faces[face_key][i*3+j] for j in range(3)] 
+                               for i in range(3)])
+        color_to_num = {v: k for k, v in CubeState.COLOR_MAP.items()}
+        face_nums = np.vectorize(color_to_num.get)(face_array)
+        for r in range(3):
+            for c in range(3):
+                cube.cube[face_idx, r, c] = face_nums[r, c]
     
-    if not moves:
-        return {'total': -1.0, 'progress': 0, 'prediction': 0, 'valid': False}
+    for move in moves:
+        cube.rotate(move)
     
-    try:
-        final_state = apply_moves(initial_state, moves)
-    except ValueError:
-        return {'total': -1.0, 'progress': 0, 'prediction': 0, 'valid': False}
-    
-    progress = calculate_progress_reward(initial_state, final_state, len(moves), solver)
-    prediction = calculate_prediction_reward(predicted_state, final_state, solver)
-    
-    return {
-        'total': 0.7 * progress + 0.3 * prediction,
-        'progress': progress,
-        'prediction': prediction,
-        'final_state': final_state,
-        'valid': True
-    }
+    new_state = CubeState()
+    new_state.from_magiccube(cube)
+    return new_state
 
-def parse_llm_response(response_text):
-    """Extract moves and predicted state from LLM response
+# Solver/Distance Module  
+class CubeSolver:
+    def get_distance(self, state: CubeState, target: CubeState = None) -> int:
+        if target and target != CubeState():
+            return 20  # Max for non-solved targets
+        try:
+            solution = kociemba.solve(state.to_kociemba())
+            return len(solution.split()) if solution else 0
+        except:
+            return 20
     
-    Args:
-        response_text: LLM's response containing <move> and <state> tags
-        
-    Returns:
-        tuple: (moves_list, predicted_state) or (None, None) if invalid
-    """
-    if not response_text:
-        return None, None
+    def get_solution(self, state: CubeState) -> str:
+        try:
+            return kociemba.solve(state.to_kociemba())
+        except:
+            return ""
+
+# Scramble Generator
+def generate_scramble(difficulty: str) -> CubeState:
+    ranges = {'easy': (1, 6), 'medium': (7, 14), 'hard': (15, 20)}
+    min_moves, max_moves = ranges.get(difficulty, (1, 20))
+    num_moves = random.randint(min_moves, max_moves)
     
-    # Extract moves between <move> tags
-    move_match = re.search(r'<move>(.*?)</move>', response_text, re.DOTALL)
-    if not move_match:
-        return None, None
+    moves = []
+    last_face = None
+    for _ in range(num_moves):
+        face = random.choice([f for f in 'UDLRFB' if f != last_face])
+        modifier = random.choice(['', '2', "'"])
+        moves.append(face + modifier)
+        last_face = face
     
-    # Parse the move string into individual moves
-    move_text = move_match.group(1).strip()
-    moves = parse_moves(move_text)
+    state = CubeState()
+    return apply_moves(state, parse_moves(' '.join(moves)))
+
+# LLM Response Parser
+def parse_llm_response(response: str) -> Tuple[Optional[List[str]], Optional[CubeState]]:
+    move_match = re.search(r'<move>(.*?)</move>', response, re.DOTALL)
+    state_match = re.search(r'<state>(.*?)</state>', response, re.DOTALL)
     
-    # Validate moves are legal Singmaster notation
-    if not moves or not validate_moves(moves):
-        return None, None
+    moves = None
+    if move_match:
+        moves = parse_moves(move_match.group(1))
+        if not validate_moves(moves):
+            moves = None
     
-    # Extract predicted state between <state> tags
-    state_match = re.search(r'<state>(.*?)</state>', response_text, re.DOTALL)
     predicted_state = None
-    
     if state_match:
         try:
-            predicted_state = CubeState(state_match.group(1).strip())
+            predicted_state = CubeState(state_match.group(1))
         except:
-            # Invalid state format
             predicted_state = None
     
     return moves, predicted_state
 
+# Reward Calculator
+def calculate_rewards(initial: CubeState, final: CubeState, moves: List[str], 
+                     predicted: Optional[CubeState], solver: CubeSolver) -> Dict:
+    progress = (solver.get_distance(initial) - solver.get_distance(final)) / len(moves) if moves else 0
+    prediction = -solver.get_distance(predicted, final) / 20 if predicted else 0
+    return {'progress': progress, 'prediction': prediction, 'total': 0.7 * progress + 0.3 * prediction}
 
-def load_environment(
-    difficulties: List[str] = ['easy', 'medium'],
-    max_moves_per_turn: int = 3,
-    dataset_size: int = 100,
-    progress_weight: float = 0.7,
-    prediction_weight: float = 0.3,
-    seed: int = 42,
-    **env_args,
-) -> vf.Environment:
+# Environment Wrapper
+class RubiksCubeEnv(vf.Environment):
+    def __init__(self, difficulties: List[str] = ['easy', 'medium'], 
+                 max_moves_per_turn: int = 3, max_episode_steps: int = 20):
+        super().__init__()
+        self.difficulties = difficulties
+        self.max_moves = max_moves_per_turn
+        self.max_episode_steps = max_episode_steps
+        self.solver = CubeSolver()
+        self.reset()
     
-    random.seed(seed)
-    solver = CubeSolver()
+    def reset(self) -> str:
+        self.state = generate_scramble(random.choice(self.difficulties))
+        self.initial_distance = self.solver.get_distance(self.state)
+        self.max_turns = math.ceil(self.max_episode_steps / self.max_moves)
+        self.turn = 0
+        self.done = False
+        self.total_reward = 0
+        return self.get_observation()
     
-    def build_dataset() -> Dataset:
-        data = []
-        samples_per_difficulty = dataset_size // len(difficulties)
-        
-        for difficulty in difficulties:
-            for _ in range(samples_per_difficulty):
-                state, scramble, distance = generate_scramble(difficulty, solver)
-                max_turns = math.ceil(distance / max_moves_per_turn)
-                
-                prompt = f"""You are solving a 3x3 Rubik's cube. Current state:
+    def get_observation(self) -> str:
+        return f"""Current cube state:
+{self.state.to_string()}
 
-{state.to_string()}
-
-Provide the next {max_moves_per_turn} moves (or fewer if solving) in Singmaster notation (U, D, L, R, F, B with optional ' for counter-clockwise or 2 for double).
-
-Format your response as:
-<move>YOUR_MOVES_HERE</move>
-<state>PREDICTED_FINAL_STATE</state>
-
-The predicted state should follow the same format as the input state."""
-                
-                data.append({
-                    'prompt': [{'role': 'user', 'content': prompt}],
-                    'answer': json.dumps({
-                        'initial_state': state.to_string(),
-                        'distance': distance,
-                        'scramble': scramble
-                    }),
-                    'task': 'rubiks-cube',
-                    'info': {
-                        'state': state,
-                        'distance': distance,
-                        'max_turns': max_turns,
-                        'turn_count': 0,
-                        'history': []
-                    }
-                })
-        
-        return Dataset.from_list(data)
+Task: Provide the next {self.max_moves} most optimal moves to solve the cube.
+- Use standard notation (U, D, L, R, F, B with optional ', 2)
+- Put moves in <move>...</move> tags
+- Predict final state after moves in <state>...</state> tags
+Turn {self.turn + 1}/{self.max_turns}"""
     
-    class RubiksCubeEnv(vf.MultiTurnEnv):
-        def is_completed(self, messages: Messages, state: State, **kwargs) -> bool:
-            info = state.get('info', {})
-            current_state = info.get('state')
-            
-            if current_state and current_state.is_solved():
-                return True
-            
-            turn_count = info.get('turn_count', 0)
-            max_turns = info.get('max_turns', 1)
-            return turn_count >= max_turns
+    def step(self, action: str) -> Tuple[str, float, bool, Dict]:
+        moves, predicted = parse_llm_response(action)
         
-        def env_response(self, messages: Messages, state: State, **kwargs) -> Tuple[Messages, State]:
-            # Get last assistant message
-            last_assistant = None
-            for msg in reversed(messages):
-                if msg['role'] == 'assistant':
-                    last_assistant = msg['content']
-                    break
+        if not moves:
+            reward = -1.0
+            self.done = True
+            info = {'error': 'Invalid move format'}
+        else:
+            if len(moves) > self.max_moves:
+                moves = moves[:self.max_moves]
             
-            if not last_assistant:
-                return [{'role': 'user', 'content': 'Please provide your moves.'}], state
+            new_state = apply_moves(self.state, moves)
+            rewards = calculate_rewards(self.state, new_state, moves, predicted, self.solver, self.max_episode_steps)
+            reward = rewards['total']
             
-            # Parse response
-            moves, predicted_state = parse_llm_response(last_assistant)
-            
-            # Update state
-            info = state.get('info', {})
-            current_state = info.get('state')
-            
-            if moves and current_state:
-                try:
-                    new_state = apply_moves(current_state, moves)
-                    info['state'] = new_state
-                    info['turn_count'] = info.get('turn_count', 0) + 1
-                    info['history'].append({
-                        'moves': moves,
-                        'predicted': predicted_state,
-                        'actual': new_state
-                    })
-                    
-                    # Generate next prompt if not completed
-                    if not new_state.is_solved() and info['turn_count'] < info['max_turns']:
-                        next_prompt = f"""Current cube state after your moves:
+            self.state = new_state
+            self.turn += 1
+            self.done = self.state.is_solved() or self.turn >= self.max_turns
+            info = {'moves': moves, 'rewards': rewards, 'solved': self.state.is_solved()}
+        
+        self.total_reward += reward
+        return self.get_observation(), reward, self.done, info
+    
+    def render(self) -> str:
+        return f"Distance to solved: {self.solver.get_distance(self.state)}\n{self.state.to_string()}"
 
-{new_state.to_string()}
-
-Distance to solution: {solver.get_distance(new_state)}
-
-Provide the next {max_moves_per_turn} moves using the same format."""
-                        return [{'role': 'user', 'content': next_prompt}], state
-                    
-                except ValueError:
-                    return [{'role': 'user', 'content': 'Invalid moves. Try again.'}], state
-            
-            return [{'role': 'user', 'content': 'Task complete.'}], state
-    
-    def create_turn_reward(turn_idx):
-        def turn_reward(completion, state, **kwargs):
-            info = state.get('info', {})
-            history = info.get('history', [])
-            
-            if turn_idx > len(history):
-                return 0.0
-            
-            turn_data = history[turn_idx - 1]
-            moves = turn_data.get('moves', [])
-            predicted = turn_data.get('predicted')
-            actual = turn_data.get('actual')
-            
-            if not moves:
-                return -1.0
-            
-            # Calculate progress reward
-            if turn_idx == 1:
-                initial = info.get('state')
-            else:
-                initial = history[turn_idx - 2].get('actual')
-            
-            progress = calculate_progress_reward(initial, actual, len(moves), solver)
-            
-            # Calculate prediction reward
-            prediction = calculate_prediction_reward(predicted, actual, solver)
-            
-            return progress_weight * progress + prediction_weight * prediction
-        
-        return turn_reward
-    
-    def overall_reward(completion, state, **kwargs):
-        info = state.get('info', {})
-        history = info.get('history', [])
-        
-        if not history:
-            return 0.0
-        
-        total = 0.0
-        for i in range(len(history)):
-            reward_func = create_turn_reward(i + 1)
-            total += reward_func(completion, state, **kwargs)
-        
-        # Bonus for solving
-        final_state = history[-1].get('actual')
-        if final_state and final_state.is_solved():
-            total += 1.0
-        
-        return total / (len(history) + 1)
-    
-    # Create rubric
-    max_turns_global = math.ceil(20 / max_moves_per_turn)
-    reward_funcs = [overall_reward]
-    weights = [1.0]
-    
-    rubric = vf.Rubric(funcs=reward_funcs, weights=weights)
-    dataset = build_dataset()
-    
-    return RubiksCubeEnv(dataset=dataset, rubric=rubric, max_turns=max_turns_global)
+def load_environment(**kwargs) -> vf.Environment:
+    '''Loads a custom Rubik's Cube RL environment.'''
+    return RubiksCubeEnv(
+        difficulties=kwargs.get('difficulties', ['easy', 'medium']),
+        max_moves_per_turn=kwargs.get('max_moves_per_turn', 3),
+        max_episode_steps=kwargs.get('max_episode_steps', 20)
+    )
