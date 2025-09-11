@@ -2,312 +2,272 @@ import re
 import random
 import math
 from typing import Tuple, List, Optional, Dict
-import numpy as np
+from dataclasses import dataclass
 import verifiers as vf
 from verifiers.types import Messages, State
 from datasets import Dataset
 import magiccube
 import kociemba
 
+# Core Cube State
+@dataclass
 class CubeState:
+    """Rubik's cube state representation"""
+    faces: Dict[str, str] = None
+    
     FACE_ORDER = ['U', 'L', 'F', 'R', 'B', 'D']
     FACE_NAMES = {'U': 'TOP', 'L': 'LEFT', 'F': 'FRONT', 'R': 'RIGHT', 'B': 'BACK', 'D': 'BOTTOM'}
+    COLOR_MAP = {'W': 'U', 'R': 'R', 'G': 'F', 'Y': 'D', 'O': 'L', 'B': 'B'}
     
-    def __init__(self, state_string: str = None):
-        if state_string:
-            self.faces = {}
-            for line in state_string.strip().split('\n'):
-                match = re.match(r'(\w+)\((\w)\): (\w{3}/\w{3}/\w{3})', line)
-                if match:
-                    face = match.group(2)
-                    colors = match.group(3).replace('/', '')
-                    self.faces[face] = colors
-        else:
-            self.faces = {'U': 'W'*9, 'L': 'O'*9, 'F': 'G'*9, 'R': 'R'*9, 'B': 'B'*9, 'D': 'Y'*9}
-    
-    def to_string(self) -> str:
-        return '\n'.join(f"{self.FACE_NAMES[f]}({f}): {self.faces[f][:3]}/{self.faces[f][3:6]}/{self.faces[f][6:9]}" 
-                        for f in self.FACE_ORDER)
-    
-    def to_magiccube_string(self) -> str:
-        """Convert to magiccube initialization string - just concatenate face colors"""
-        result = ""
-        for face in ['U', 'L', 'F', 'R', 'B', 'D']:
-            result += self.faces[face]
-        return result
-    
-    def from_magiccube_string(self, cube_string: str):
-        """Parse magiccube's string format back to our representation"""
-        if len(cube_string) != 54:
-            raise ValueError(f"Invalid cube string length: {len(cube_string)}")
-        
-        idx = 0
-        for face in ['U', 'L', 'F', 'R', 'B', 'D']:
-            self.faces[face] = cube_string[idx:idx+9]
-            idx += 9
-    
-    def to_kociemba(self) -> str:
-        """Convert to kociemba format (different face order: U R F D L B)"""
-        kociemba_order = ['U', 'R', 'F', 'D', 'L', 'B']
-        kociemba_map = {'W': 'U', 'R': 'R', 'G': 'F', 'Y': 'D', 'O': 'L', 'B': 'B'}
-        
-        result = ""
-        for face in kociemba_order:
-            face_colors = self.faces[face]
-            for color in face_colors:
-                result += kociemba_map[color]
-        return result
-    
-    def to_dict(self) -> Dict:
-        """Convert to dictionary for serialization"""
-        return self.faces.copy()
+    def __post_init__(self):
+        if self.faces is None:
+            self.faces = {f: c*9 for f, c in zip(self.FACE_ORDER, 'WOGRBY')}
     
     @classmethod
-    def from_dict(cls, faces_dict: Dict):
-        """Create from dictionary"""
-        state = cls()
-        state.faces = faces_dict
-        return state
+    def from_string(cls, s: str) -> 'CubeState':
+        """Parse from string format"""
+        faces = {}
+        for line in s.strip().split('\n'):
+            if m := re.match(r'\w+\((\w)\): (\w{3}/\w{3}/\w{3})', line):
+                faces[m.group(1)] = m.group(2).replace('/', '')
+        return cls(faces)
+    
+    def to_string(self) -> str:
+        """Convert to display format"""
+        return '\n'.join(
+            f"{self.FACE_NAMES[f]}({f}): {self.faces[f][:3]}/{self.faces[f][3:6]}/{self.faces[f][6:9]}" 
+            for f in self.FACE_ORDER
+        )
+    
+    def to_magiccube(self) -> str:
+        """Convert for magiccube library"""
+        return ''.join(self.faces[f] for f in self.FACE_ORDER)
+    
+    def to_kociemba(self) -> str:
+        """Convert for kociemba solver"""
+        order = ['U', 'R', 'F', 'D', 'L', 'B']
+        return ''.join(self.COLOR_MAP[c] for f in order for c in self.faces[f])
     
     def is_solved(self) -> bool:
+        """Check if cube is solved"""
         return all(len(set(colors)) == 1 for colors in self.faces.values())
     
     def __eq__(self, other) -> bool:
-        return self.faces == other.faces if isinstance(other, CubeState) else False
+        return isinstance(other, CubeState) and self.faces == other.faces
 
-def parse_moves(move_string: str) -> List[str]:
-    """Parse move string into list of individual moves"""
-    moves = re.findall(r"[UDLRFB][2']?", move_string.upper())
-    return moves
+def parse_moves(s: str) -> List[str]:
+    """Extract valid moves from string"""
+    return re.findall(r"[UDLRFB][2']?", s.upper())
 
 def validate_moves(moves: List[str]) -> bool:
-    """Check if moves are valid Singmaster notation"""
-    valid_pattern = re.compile(r"^[UDLRFB][2']?$")
-    return all(valid_pattern.match(m) for m in moves)
+    """Validate Singmaster notation"""
+    return all(re.match(r"^[UDLRFB][2']?$", m) for m in moves)
 
-def apply_moves(state: CubeState, moves: List[str]) -> CubeState:
-    """Apply moves to cube state using magiccube"""
-    cube = magiccube.Cube(3, state.to_magiccube_string())
-    
+def apply_sequence(state: CubeState, moves: List[str]) -> CubeState:
+    """Apply move sequence to cube"""
+    cube = magiccube.Cube(3, state.to_magiccube())
     for move in moves:
         cube.rotate(move)
     
-    result_string = cube.get()
-    
-    new_state = CubeState()
-    new_state.from_magiccube_string(result_string)
-    return new_state
+    result = CubeState()
+    result.faces = {f: cube.get()[i*9:(i+1)*9] for i, f in enumerate(CubeState.FACE_ORDER)}
+    return result
 
-# Solver/Distance Module
-class CubeSolver:
-    def get_distance(self, state: CubeState, target: CubeState = None) -> int:
-        """Get optimal move count to solve"""
+# Solver
+class Solver:
+    """Cube distance and solution calculator"""
+    _cache = {}
+    
+    def distance(self, state: CubeState, target: CubeState = None) -> int:
+        """Get optimal move count to target (or solved)"""
         if target and not target.is_solved():
             return 20
-        
         if state.is_solved():
             return 0
-            
+        
+        key = state.to_kociemba()
+        if key in self._cache:
+            return self._cache[key]
+        
         try:
-            kociemba_string = state.to_kociemba()
-            solution = kociemba.solve(kociemba_string)
-            if solution == "" or solution is None:
-                return 0
-            return len(solution.split())
-        except Exception as e:
-            print(f"Kociemba error: {e}")
+            solution = kociemba.solve(key)
+            dist = 0 if not solution else len(solution.split())
+            self._cache[key] = dist
+            return dist
+        except:
             return 20
     
-    def get_solution(self, state: CubeState) -> str:
+    def solve(self, state: CubeState) -> str:
         """Get solution moves"""
-        try:
-            if state.is_solved():
-                return ""
-            return kociemba.solve(state.to_kociemba())
-        except:
-            return ""
+        return "" if state.is_solved() else kociemba.solve(state.to_kociemba())
 
+# Scramble Generation
 def generate_scramble(difficulty: str) -> CubeState:
-    """Generate a scrambled cube"""
+    """Generate scrambled cube at specified difficulty"""
     ranges = {'easy': (1, 6), 'medium': (7, 14), 'hard': (15, 20)}
-    min_moves, max_moves = ranges.get(difficulty, (1, 20))
-    num_moves = random.randint(min_moves, max_moves)
+    n = random.randint(*ranges.get(difficulty, (1, 20)))
     
     moves = []
-    last_face = None
-    opposite_faces = {'U': 'D', 'D': 'U', 'L': 'R', 'R': 'L', 'F': 'B', 'B': 'F'}
+    last = None
+    opposites = {'U': 'D', 'D': 'U', 'L': 'R', 'R': 'L', 'F': 'B', 'B': 'F'}
     
-    for _ in range(num_moves):
-        available = [f for f in 'UDLRFB' if f != last_face]
-        if last_face and len(available) > 1:
-            opp = opposite_faces.get(last_face)
-            if opp in available and len(available) > 2:
-                available.remove(opp)
+    for _ in range(n):
+        faces = [f for f in 'UDLRFB' if f != last]
+        if last and opposites.get(last) in faces and len(faces) > 2:
+            faces.remove(opposites[last])
         
-        face = random.choice(available)
-        modifier = random.choice(['', '2', "'"])
-        moves.append(face + modifier)
-        last_face = face
+        face = random.choice(faces)
+        moves.append(face + random.choice(['', '2', "'"]))
+        last = face
     
-    state = CubeState()
-    return apply_moves(state, moves)
+    return apply_sequence(CubeState(), moves)
 
-# LLM Response Parser
-def parse_llm_response(response: str) -> Tuple[Optional[List[str]], Optional[CubeState]]:
-    """Parse moves and predicted state from LLM response"""
-    move_match = re.search(r'<move>(.*?)</move>', response, re.DOTALL)
-    state_match = re.search(r'<state>(.*?)</state>', response, re.DOTALL)
-    
+# LLM Interface
+def parse_response(response: str) -> Tuple[Optional[List[str]], Optional[CubeState]]:
+    """Extract moves and predicted state from LLM response"""
     moves = None
-    if move_match:
-        moves = parse_moves(move_match.group(1))
+    if m := re.search(r'<move>(.*?)</move>', response, re.DOTALL):
+        moves = parse_moves(m.group(1))
         if not validate_moves(moves):
             moves = None
     
-    predicted_state = None
-    if state_match:
+    predicted = None
+    if m := re.search(r'<state>(.*?)</state>', response, re.DOTALL):
         try:
-            predicted_state = CubeState(state_match.group(1))
+            predicted = CubeState.from_string(m.group(1))
         except:
-            predicted_state = None
+            pass
     
-    return moves, predicted_state
+    return moves, predicted
 
-def prepare_rubiks_episode(x, difficulties=['easy', 'medium'], max_moves_per_turn=3, max_episode_steps=20):
-    solver = CubeSolver()
-    difficulty = random.choice(difficulties)
-    cube_state = generate_scramble(difficulty)
-    initial_distance = solver.get_distance(cube_state)
-    max_turns = math.ceil(max_episode_steps / max_moves_per_turn)
-    
-    initial_msg = f"""You are solving a 3x3 Rubik's cube.
+def generate_prompt(state: CubeState, max_moves: int) -> str:
+    """Generate task prompt"""
+    return f"""You are solving a 3x3 Rubik's cube.
 
 State representation: Each face shows its 9 stickers as a 3x3 grid (rows separated by /).
 Colors: W=White, R=Red, B=Blue, O=Orange, G=Green, Y=Yellow
 
 Current state:
-{cube_state.to_string()}
+{state.to_string()}
 
-Task: Provide up to {max_moves_per_turn} moves to make progress toward solving this cube.
+Task: Provide up to {max_moves} moves to make progress toward solving this cube.
 - Use Singmaster notation: U, D, L, R, F, B (with optional ' for counterclockwise, 2 for double)
 - Put your moves in <move>...</move> tags (use <move></move> if no moves needed)
 - Stop early if cube becomes solved
 - Predict the resulting state after your moves in <state>...</state> tags using the same format"""
+
+# Reward Calculation
+class RewardCalculator:
+    """Calculate various reward components"""
+    
+    @staticmethod
+    def path_reward(initial_dist: int, final_dist: int, num_moves: int) -> float:
+        """Reward for optimal pathing"""
+        if num_moves == 0:
+            return 0
+        return (initial_dist - final_dist) / num_moves
+    
+    @staticmethod
+    def model_reward(predicted: Optional[CubeState], actual: CubeState) -> float:
+        """Reward for mental modeling accuracy"""
+        if predicted is None:
+            return -0.5
+        return 1.0 if predicted == actual else -0.5
+    
+    @staticmethod
+    def completion_bonus(turn: int, max_turns: int) -> float:
+        """Bonus for solving within turn limit"""
+        return 2.0 * (1 - turn / max_turns)
+
+# Episode Setup
+def prepare_episode(x, difficulties=['easy', 'medium'], max_moves_per_turn=3, max_steps=20):
+    """Initialize episode with scrambled cube"""
+    solver = Solver()
+    difficulty = random.choice(difficulties)
+    state = generate_scramble(difficulty)
     
     x["task"] = "rubiks-cube"
     x["info"] = {
-        "cube_state_dict": cube_state.to_dict(),
-        "initial_distance": initial_distance,
-        "max_turns": max_turns,
-        "max_moves_per_turn": max_moves_per_turn,
-        "max_episode_steps": max_episode_steps,
+        "cube": state.faces,
+        "initial_dist": solver.distance(state),
+        "max_turns": math.ceil(max_steps / max_moves_per_turn),
+        "max_moves": max_moves_per_turn,
         "difficulty": difficulty
     }
-    x["prompt"] = [{"role": "user", "content": initial_msg}]
+    x["prompt"] = [{"role": "user", "content": generate_prompt(state, max_moves_per_turn)}]
     return x
 
+# Environment
 class RubiksCubeEnv(vf.MultiTurnEnv):
+    """Multi-turn Rubik's cube environment"""
+    
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.solver = CubeSolver()
+        self.solver = Solver()
+        self.rewards = RewardCalculator()
     
     def is_completed(self, messages: Messages, state: State, **kwargs) -> bool:
-        cube_dict = state['info'].get('cube_state_dict')
-        if cube_dict:
-            cube_state = CubeState.from_dict(cube_dict)
-            if cube_state.is_solved():
-                return True
-        return state['turn'] >= state['info'].get('max_turns', 10)
+        """Check episode termination"""
+        cube = CubeState(state['info'].get('cube'))
+        return cube.is_solved() or state['turn'] >= state['info'].get('max_turns', 10)
     
     def env_response(self, messages: Messages, state: State, **kwargs) -> Tuple[Messages, State]:
+        """Process turn and calculate rewards"""
+        if not messages or messages[-1]['role'] != 'assistant':
+            return [], state
+        
         info = state['info']
+        response = messages[-1]['content']
+        moves, predicted = parse_response(response)
         
-        # Process assistant's response
-        if messages and messages[-1]['role'] == 'assistant':
-            last_response = messages[-1]['content']
-            moves, predicted = parse_llm_response(last_response)
-            
-            # Handle invalid or empty moves
-            if moves is None:
-                state['reward'] = -1.0
-                state['done'] = True
-                return [{"role": "user", "content": "Invalid format. Task terminated."}], state
-            
-            if len(moves) == 0:  # Empty moves allowed
-                state['reward'] = 0
-                state['done'] = False
-                next_msg = f"""No moves executed.
-
-Current state unchanged:
-{CubeState.from_dict(info['cube_state_dict']).to_string()}
-
-Provide up to {info['max_moves_per_turn']} moves to make progress."""
-                return [{"role": "user", "content": next_msg}], state
-            
-            # Limit moves to max allowed
-            moves = moves[:info['max_moves_per_turn']]
-            
-            # Apply moves
-            cube_state = CubeState.from_dict(info['cube_state_dict'])
-            initial_distance = self.solver.get_distance(cube_state)
-            new_state = apply_moves(cube_state, moves)
-            final_distance = self.solver.get_distance(new_state)
-            
-            # Calculate rewards
-            progress = (initial_distance - final_distance) / len(moves)
-            if predicted:
-                pred_reward = 1.0 if predicted == new_state else -0.5
-            else:
-                pred_reward = -0.5
-            
-            state['reward'] = 0.7 * progress + 0.3 * pred_reward
-            state['total_reward'] = state.get('total_reward', 0) + state['reward']
-            
-            # Update cube state
-            info['cube_state_dict'] = new_state.to_dict()
-            
-            # Check if solved
-            if new_state.is_solved():
-                return [{"role": "user", "content": f"Cube solved! Reward: {state['total_reward']:.3f}"}], state
-            
-            # Continue with next turn
-            next_msg = f"""Executed: {' '.join(moves)}
-Progress reward: {progress:.3f}
-
-Current state:
-{new_state.to_string()}
-
-Provide up to {info['max_moves_per_turn']} moves to make progress."""
-            
-            return [{"role": "user", "content": next_msg}], state
+        if moves is None:
+            state['reward'] = -1.0
+            state['done'] = True
+            return [{"role": "user", "content": "Invalid format. Task terminated."}], state
         
-        return [], state
+        if not moves:
+            state['reward'] = 0
+            msg = f"No moves executed.\n\nCurrent state unchanged:\n{CubeState(info['cube']).to_string()}\n\nProvide up to {info['max_moves']} moves to make progress."
+            return [{"role": "user", "content": msg}], state
+        
+        moves = moves[:info['max_moves']]
+        current = CubeState(info['cube'])
+        initial_dist = self.solver.distance(current)
+        new_cube = apply_sequence(current, moves)
+        final_dist = self.solver.distance(new_cube)
+        
+        path_r = self.rewards.path_reward(initial_dist, final_dist, len(moves))
+        model_r = self.rewards.model_reward(predicted, new_cube)
+        
+        state['reward'] = 0.7 * path_r + 0.3 * model_r
+        state['total_reward'] = state.get('total_reward', 0) + state['reward']
+        
+        info['cube'] = new_cube.faces
+        
+        if new_cube.is_solved():
+            bonus = self.rewards.completion_bonus(state['turn'], info['max_turns'])
+            state['total_reward'] += bonus
+            return [{"role": "user", "content": f"Cube solved! Total reward: {state['total_reward']:.3f}"}], state
+        
+        msg = f"Executed: {' '.join(moves)}\nProgress reward: {path_r:.3f}\n\nCurrent state:\n{new_cube.to_string()}\n\nProvide up to {info['max_moves']} moves to make progress."
+        return [{"role": "user", "content": msg}], state
 
 def load_environment(**kwargs) -> vf.Environment:
-    '''Loads the Rubik's Cube RL environment'''
+    """Load Rubik's Cube RL environment"""
     dataset = Dataset.from_dict({'episode': range(1000)})
-    
-    # Map dataset to add required fields
-    difficulties = kwargs.get('difficulties', ['easy', 'medium'])
-    max_moves_per_turn = kwargs.get('max_moves_per_turn', 3)
-    max_episode_steps = kwargs.get('max_episode_steps', 20)
-    
     dataset = dataset.map(
-        lambda x: prepare_rubiks_episode(x, difficulties, max_moves_per_turn, max_episode_steps)
+        lambda x: prepare_episode(
+            x, 
+            kwargs.get('difficulties', ['easy', 'medium']),
+            kwargs.get('max_moves_per_turn', 3),
+            kwargs.get('max_episode_steps', 20)
+        )
     )
     
     parser = vf.Parser()
-    
-    def rubiks_reward_func(parser, completion, info, **kwargs) -> float:
-        """Extract total reward from state"""
-        state = kwargs.get('state', {})
-        return state.get('total_reward', 0.0)
-    
-    rubric = vf.Rubric(parser=parser, funcs=[rubiks_reward_func])
-    
-    return RubiksCubeEnv(
-        dataset=dataset,
+    rubric = vf.Rubric(
         parser=parser,
-        rubric=rubric,
-        **kwargs
+        funcs=[lambda p, c, i, **kw: kw.get('state', {}).get('total_reward', 0.0)]
     )
+    
+    return RubiksCubeEnv(dataset=dataset, parser=parser, rubric=rubric, **kwargs)
