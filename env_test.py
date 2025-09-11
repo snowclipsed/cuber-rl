@@ -1,5 +1,5 @@
 import random
-from cuber_rl import *
+from environments.cuber_rl.cuber_rl import *
 
 # State Tests
 def test_cube_state_creation():
