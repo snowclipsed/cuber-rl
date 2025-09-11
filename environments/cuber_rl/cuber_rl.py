@@ -55,6 +55,7 @@ class CubeState:
     def __eq__(self, other) -> bool:
         return isinstance(other, CubeState) and self.faces == other.faces
 
+# Move Operations
 def parse_moves(s: str) -> List[str]:
     """Extract valid moves from string"""
     return re.findall(r"[UDLRFB][2']?", s.upper())
@@ -127,9 +128,13 @@ def parse_response(response: str) -> Tuple[Optional[List[str]], Optional[CubeSta
     """Extract moves and predicted state from LLM response"""
     moves = None
     if m := re.search(r'<move>(.*?)</move>', response, re.DOTALL):
-        moves = parse_moves(m.group(1))
-        if not validate_moves(moves):
-            moves = None
+        content = m.group(1).strip()
+        if content == "":
+            moves = []
+        else:
+            moves = parse_moves(content)
+            if not moves or not validate_moves(moves):
+                moves = None
     
     predicted = None
     if m := re.search(r'<state>(.*?)</state>', response, re.DOTALL):
