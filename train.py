@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 import os
 import torch
 import verifiers as vf
@@ -6,7 +5,7 @@ import wandb
 
 wandb.init(project="rubiks-cube-rl", name="qwen3-instruct-grpo")
 
-model_name = "Qwen/Qwen3-4B-Instruct-2507"
+model_name = "willcb/Qwen3-4B"
 model, tokenizer = vf.get_model_and_tokenizer(model_name)
 
 env = vf.load_environment(
@@ -26,9 +25,9 @@ training_args.max_tokens = 2048
 training_args.max_seq_len = 2048
 training_args.max_steps = 500
 training_args.eval_strategy = "steps"
-training_args.eval_steps = 50
+training_args.eval_steps = 10
 training_args.save_steps = 100
-training_args.logging_steps = 10
+training_args.logging_steps = 5
 training_args.mask_env_responses = True
 training_args.max_grad_norm = 0.1
 training_args.beta = 0.0
