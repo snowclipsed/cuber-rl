@@ -155,11 +155,16 @@ Colors: W=White, R=Red, B=Blue, O=Orange, G=Green, Y=Yellow
 Current state:
 {state.to_string()}
 
-Task: Provide up to {max_moves} moves to make progress toward solving this cube.
-- Use Singmaster notation: U, D, L, R, F, B (with optional ' for counterclockwise, 2 for double)
-- Put your moves in <move>...</move> tags (use <move></move> if no moves needed)
-- Stop early if cube becomes solved
-- Predict the resulting state after your moves in <state>...</state> tags using the same format"""
+Task: Provide up to {max_moves} moves to make progress toward solving this cube, and correctly predict the state of the cube after those moves are made.
+
+Rules:
+- Please use Singmaster notation: U, D, L, R, F, B (with optional ' for counterclockwise, 2 for double).
+- You must put your moves in <move>...</move> tags (use <move></move> if no moves needed).
+- You must put the resulting state after your moves in <state>...</state> tags using the same format as provided to you.
+- If cube is solved before you reach {max_moves} moves, provide no further moves and just confirm the cube is solved.
+
+Be concise and only respond with the answer, using <move> and <state> tags according to the rules.
+"""
 
 # Reward Calculation
 class RewardCalculator:
@@ -176,8 +181,8 @@ class RewardCalculator:
     def model_reward(predicted: Optional[CubeState], actual: CubeState) -> float:
         """Reward for mental modeling accuracy"""
         if predicted is None:
-            return -0.5
-        return 1.0 if predicted == actual else -0.5
+            return -1.0  # Heavy penalty for not trying
+        return 1.0 if predicted == actual else -0.2  # Light penalty for wrong attempt
     
     @staticmethod
     def completion_bonus(turn: int, max_turns: int) -> float:
@@ -247,11 +252,7 @@ class RubiksCubeEnv(vf.MultiTurnEnv):
         path_r = self.rewards.path_reward(initial_dist, final_dist, len(moves))
         model_r = self.rewards.model_reward(predicted, new_cube)
         
-        if predicted is None:
-            state['reward'] = 0.7 * path_r + 0.3 * model_r - 0.2  # Extra penalty
-        else:
-            state['reward'] = 0.7 * path_r + 0.3 * model_r
-        
+        state['reward'] = 0.7 * path_r + 0.3 * model_r
         state['total_reward'] = state.get('total_reward', 0) + state['reward']
         info['cube'] = new_cube.faces
         
@@ -262,7 +263,7 @@ class RubiksCubeEnv(vf.MultiTurnEnv):
         
         msg = f"Executed: {' '.join(moves)}\nReward: {state['reward']:.3f}"
         if predicted is None:
-            msg += " (penalty for missing state prediction)"
+            msg += " (include state prediction for better reward)"
         msg += f"\n\nCurrent state:\n{new_cube.to_string()}\n\nProvide up to {info['max_moves']} moves in <move>...</move> and predict result in <state>...</state>."
         
         return [{"role": "user", "content": msg}], state
