@@ -226,13 +226,16 @@ class RubiksCubeEnv(vf.MultiTurnEnv):
         moves, predicted = parse_response(response)
         
         if moves is None:
-            state['reward'] = -1.0
-            state['done'] = True
-            return [{"role": "user", "content": "Invalid format. Task terminated."}], state
+            state['reward'] = -0.5
+            state['total_reward'] = state.get('total_reward', 0) - 0.5
+            msg = "Invalid move format. Provide moves in <move>...</move> tags. Continuing..."
+            return [{"role": "user", "content": msg}], state
         
         if not moves:
-            state['reward'] = 0
-            msg = f"No moves executed.\n\nCurrent state unchanged:\n{CubeState(info['cube']).to_string()}\n\nProvide up to {info['max_moves']} moves to make progress."
+            state['reward'] = -0.1  # Small penalty for no action
+            state['total_reward'] = state.get('total_reward', 0) - 0.1
+            current = CubeState(info['cube'])
+            msg = f"No moves executed.\n\nCurrent state:\n{current.to_string()}\n\nProvide up to {info['max_moves']} moves in <move>...</move> tags."
             return [{"role": "user", "content": msg}], state
         
         moves = moves[:info['max_moves']]
@@ -244,9 +247,12 @@ class RubiksCubeEnv(vf.MultiTurnEnv):
         path_r = self.rewards.path_reward(initial_dist, final_dist, len(moves))
         model_r = self.rewards.model_reward(predicted, new_cube)
         
-        state['reward'] = 0.7 * path_r + 0.3 * model_r
-        state['total_reward'] = state.get('total_reward', 0) + state['reward']
+        if predicted is None:
+            state['reward'] = 0.7 * path_r + 0.3 * model_r - 0.2  # Extra penalty
+        else:
+            state['reward'] = 0.7 * path_r + 0.3 * model_r
         
+        state['total_reward'] = state.get('total_reward', 0) + state['reward']
         info['cube'] = new_cube.faces
         
         if new_cube.is_solved():
@@ -254,7 +260,11 @@ class RubiksCubeEnv(vf.MultiTurnEnv):
             state['total_reward'] += bonus
             return [{"role": "user", "content": f"Cube solved! Total reward: {state['total_reward']:.3f}"}], state
         
-        msg = f"Executed: {' '.join(moves)}\nProgress reward: {path_r:.3f}\n\nCurrent state:\n{new_cube.to_string()}\n\nProvide up to {info['max_moves']} moves to make progress."
+        msg = f"Executed: {' '.join(moves)}\nReward: {state['reward']:.3f}"
+        if predicted is None:
+            msg += " (penalty for missing state prediction)"
+        msg += f"\n\nCurrent state:\n{new_cube.to_string()}\n\nProvide up to {info['max_moves']} moves in <move>...</move> and predict result in <state>...</state>."
+        
         return [{"role": "user", "content": msg}], state
 
 def load_environment(**kwargs) -> vf.Environment:
@@ -270,9 +280,12 @@ def load_environment(**kwargs) -> vf.Environment:
     )
     
     parser = vf.Parser()
-    rubric = vf.Rubric(
-        parser=parser,
-        funcs=[lambda p, c, i, **kw: kw.get('state', {}).get('total_reward', 0.0)]
-    )
+    def reward_func(parser, completion, info, state=None, **kwargs):
+        """Extract total reward from state"""
+        if state is None:
+            state = kwargs.get('state', {})
+        return state.get('total_reward', 0.0)
+    
+    rubric = vf.Rubric(parser=parser, funcs=[reward_func])
     
     return RubiksCubeEnv(dataset=dataset, parser=parser, rubric=rubric, **kwargs)
