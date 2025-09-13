@@ -9,7 +9,6 @@ from datasets import Dataset
 import magiccube
 import kociemba
 
-# Core Cube State
 @dataclass
 class CubeState:
     """Rubik's cube state representation"""
@@ -51,11 +50,7 @@ class CubeState:
     def is_solved(self) -> bool:
         """Check if cube is solved"""
         return all(len(set(colors)) == 1 for colors in self.faces.values())
-    
-    def __eq__(self, other) -> bool:
-        return isinstance(other, CubeState) and self.faces == other.faces
 
-# Move Operations
 def parse_moves(s: str) -> List[str]:
     """Extract valid moves from string"""
     return re.findall(r"[UDLRFB][2']?", s.upper())
@@ -74,7 +69,6 @@ def apply_sequence(state: CubeState, moves: List[str]) -> CubeState:
     result.faces = {f: cube.get()[i*9:(i+1)*9] for i, f in enumerate(CubeState.FACE_ORDER)}
     return result
 
-# Solver
 class Solver:
     """Cube distance and solution calculator"""
     _cache = {}
@@ -97,12 +91,7 @@ class Solver:
             return dist
         except:
             return 20
-    
-    def solve(self, state: CubeState) -> str:
-        """Get solution moves"""
-        return "" if state.is_solved() else kociemba.solve(state.to_kociemba())
 
-# Scramble Generation
 def generate_scramble(difficulty: str) -> CubeState:
     """Generate scrambled cube at specified difficulty"""
     ranges = {'easy': (1, 6), 'medium': (7, 14), 'hard': (15, 20)}
@@ -123,71 +112,34 @@ def generate_scramble(difficulty: str) -> CubeState:
     
     return apply_sequence(CubeState(), moves)
 
-# LLM Interface
-def parse_response(response: str) -> Tuple[Optional[List[str]], Optional[CubeState]]:
-    """Extract moves and predicted state from LLM response"""
-    moves = None
+def parse_response(response: str) -> Optional[List[str]]:
+    """Extract moves from LLM response"""
     if m := re.search(r'<move>(.*?)</move>', response, re.DOTALL):
         content = m.group(1).strip()
         if content == "":
-            moves = []
-        else:
-            moves = parse_moves(content)
-            if not moves or not validate_moves(moves):
-                moves = None
-    
-    predicted = None
-    if m := re.search(r'<state>(.*?)</state>', response, re.DOTALL):
-        try:
-            predicted = CubeState.from_string(m.group(1))
-        except:
-            pass
-    
-    return moves, predicted
+            return []
+        moves = parse_moves(content)
+        if moves and validate_moves(moves):
+            return moves
+    return None
 
 def generate_prompt(state: CubeState, max_moves: int) -> str:
     """Generate task prompt"""
     return f"""You are solving a 3x3 Rubik's cube.
 
-State representation: Each face shows its 9 stickers as a 3x3 grid (rows separated by /).
-Colors: W=White, R=Red, B=Blue, O=Orange, G=Green, Y=Yellow
-
 Current state:
 {state.to_string()}
 
-Task: Provide up to {max_moves} moves to make progress toward solving this cube, and correctly predict the state of the cube after those moves are made.
+Task: Provide up to {max_moves} moves to make progress toward solving this cube.
 
 Rules:
-- Please use Singmaster notation: U, D, L, R, F, B (with optional ' for counterclockwise, 2 for double).
-- You must put your moves in <move>...</move> tags (use <move></move> if no moves needed).
-- You must put the resulting state after your moves in <state>...</state> tags using the same format as provided to you.
-- If cube is solved before you reach {max_moves} moves, provide no further moves and just confirm the cube is solved.
+- Use Singmaster notation: U, D, L, R, F, B (with optional ' for counterclockwise, 2 for double)
+- Put your moves in <move>...</move> tags
+- Use <move></move> if cube is already solved
 
-Be concise and only respond with the answer, using <move> and <state> tags according to the rules.
-"""
+Example format: <move>R U R' F2</move>
 
-# Reward Calculation
-class RewardCalculator:
-    """Calculate various reward components"""
-    
-    @staticmethod
-    def path_reward(initial_dist: int, final_dist: int, num_moves: int) -> float:
-        """Reward for optimal pathing"""
-        if num_moves == 0:
-            return 0
-        return (initial_dist - final_dist) / num_moves
-    
-    @staticmethod
-    def model_reward(predicted: Optional[CubeState], actual: CubeState) -> float:
-        """Reward for mental modeling accuracy"""
-        if predicted is None:
-            return -1.0  # Heavy penalty for not trying
-        return 1.0 if predicted == actual else -0.2  # Light penalty for wrong attempt
-    
-    @staticmethod
-    def completion_bonus(turn: int, max_turns: int) -> float:
-        """Bonus for solving within turn limit"""
-        return 2.0 * (1 - turn / max_turns)
+Be concise and only respond with moves in proper format."""
 
 # Episode Setup
 def prepare_episode(x, difficulties=['easy', 'medium'], max_moves_per_turn=3, max_steps=20):
@@ -207,14 +159,12 @@ def prepare_episode(x, difficulties=['easy', 'medium'], max_moves_per_turn=3, ma
     x["prompt"] = [{"role": "user", "content": generate_prompt(state, max_moves_per_turn)}]
     return x
 
-# Environment
 class RubiksCubeEnv(vf.MultiTurnEnv):
     """Multi-turn Rubik's cube environment"""
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.solver = Solver()
-        self.rewards = RewardCalculator()
     
     def is_completed(self, messages: Messages, state: State, **kwargs) -> bool:
         """Check episode termination"""
@@ -228,44 +178,49 @@ class RubiksCubeEnv(vf.MultiTurnEnv):
         
         info = state['info']
         response = messages[-1]['content']
-        moves, predicted = parse_response(response)
+        moves = parse_response(response)
         
-        if moves is None:
-            state['reward'] = -0.5
-            state['total_reward'] = state.get('total_reward', 0) - 0.5
-            msg = "Invalid move format. Provide moves in <move>...</move> tags. Continuing..."
+        turn_reward = 0
+        
+        # Format reward
+        if moves is not None:
+            turn_reward += 0.1
+        else:
+            state['reward'] = 0
+            state['total_reward'] = state.get('total_reward', 0)
+            msg = "Invalid format. Use <move>...</move> tags."
             return [{"role": "user", "content": msg}], state
         
+        # Handle no moves
         if not moves:
-            state['reward'] = -0.1  # Small penalty for no action
-            state['total_reward'] = state.get('total_reward', 0) - 0.1
+            state['reward'] = turn_reward
+            state['total_reward'] = state.get('total_reward', 0) + turn_reward
             current = CubeState(info['cube'])
-            msg = f"No moves executed.\n\nCurrent state:\n{current.to_string()}\n\nProvide up to {info['max_moves']} moves in <move>...</move> tags."
+            msg = f"No moves executed.\n\nCurrent state:\n{current.to_string()}"
             return [{"role": "user", "content": msg}], state
         
+        # Execute moves
         moves = moves[:info['max_moves']]
         current = CubeState(info['cube'])
         initial_dist = self.solver.distance(current)
         new_cube = apply_sequence(current, moves)
         final_dist = self.solver.distance(new_cube)
         
-        path_r = self.rewards.path_reward(initial_dist, final_dist, len(moves))
-        model_r = self.rewards.model_reward(predicted, new_cube)
+        # Progress reward
+        if initial_dist > 0:
+            progress = max(0, (initial_dist - final_dist) / initial_dist) # we clamp to zero to avoid negative rewards
+            turn_reward += progress
         
-        state['reward'] = 0.7 * path_r + 0.3 * model_r
-        state['total_reward'] = state.get('total_reward', 0) + state['reward']
         info['cube'] = new_cube.faces
+        state['reward'] = turn_reward
+        state['total_reward'] = state.get('total_reward', 0) + turn_reward
         
         if new_cube.is_solved():
-            bonus = self.rewards.completion_bonus(state['turn'], info['max_turns'])
-            state['total_reward'] += bonus
-            return [{"role": "user", "content": f"Cube solved! Total reward: {state['total_reward']:.3f}"}], state
+            # Success reward + efficiency reward
+            state['total_reward'] += 1.0 + (1.0 / state['turn'])
+            return [{"role": "user", "content": f"Solved! Reward: {state['total_reward']:.2f}"}], state
         
-        msg = f"Executed: {' '.join(moves)}\nReward: {state['reward']:.3f}"
-        if predicted is None:
-            msg += " (include state prediction for better reward)"
-        msg += f"\n\nCurrent state:\n{new_cube.to_string()}\n\nProvide up to {info['max_moves']} moves in <move>...</move> and predict result in <state>...</state>."
-        
+        msg = f"Moves: {' '.join(moves)} | Reward: {turn_reward:.2f}\n\nCurrent state:\n{new_cube.to_string()}"
         return [{"role": "user", "content": msg}], state
 
 def load_environment(**kwargs) -> vf.Environment:
