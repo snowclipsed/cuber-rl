@@ -132,14 +132,22 @@ Current state:
 
 Task: Provide up to {max_moves} moves to make progress toward solving this cube.
 
+Notation (Singmaster):
+- Each letter represents rotating one face of the cube
+- U (Up/top), D (Down/bottom), L (Left), R (Right), F (Front), B (Back)
+- Single letter = rotate that face 90° clockwise (when looking at that face)
+- Letter + ' = rotate that face 90° counterclockwise (e.g., U' rotates top counterclockwise)
+- Letter + 2 = rotate that face 180° (e.g., F2 rotates front 180°)
+
 Rules:
-- Use Singmaster notation: U, D, L, R, F, B (with optional ' for counterclockwise, 2 for double)
 - Put your moves in <move>...</move> tags
+- Multiple moves separated by spaces
 - Use <move></move> if cube is already solved
 
-Example format: <move>R U R' F2</move>
+Format for N moves: <move> Move1 Move2 Move3 ... Move N</move>
+Example format for 4 moves: <move>R U R' F2</move> (this means: right clockwise, top clockwise, right counter, front 180°)
 
-Be concise and only respond with moves in proper format."""
+Be concise and only respond with moves in proper format and no other text."""
 
 # Episode Setup
 def prepare_episode(x, difficulties=['easy', 'medium'], max_moves_per_turn=3, max_steps=20):
@@ -188,7 +196,7 @@ class RubiksCubeEnv(vf.MultiTurnEnv):
         else:
             state['reward'] = 0
             state['total_reward'] = state.get('total_reward', 0)
-            msg = "Invalid format. Use <move>...</move> tags."
+            msg = "Invalid format. Use <move>...</move> tags. Format for N moves: <move> Move1 Move2 Move3 ... Move N</move>"
             return [{"role": "user", "content": msg}], state
         
         # Handle no moves
@@ -220,7 +228,13 @@ class RubiksCubeEnv(vf.MultiTurnEnv):
             state['total_reward'] += 1.0 + (1.0 / state['turn'])
             return [{"role": "user", "content": f"Solved! Reward: {state['total_reward']:.2f}"}], state
         
-        msg = f"Moves: {' '.join(moves)} | Reward: {turn_reward:.2f}\n\nCurrent state:\n{new_cube.to_string()}"
+        msg = f"""Moves: {' '.join(moves)} | Reward: {turn_reward:.2f}
+
+    Current state:
+    {new_cube.to_string()}
+
+    Provide up to {info['max_moves']} moves using <move>...</move> tags. Only respond with moves. Format for N moves: <move> Move1 Move2 Move3 ... Move N</move>"""
+        
         return [{"role": "user", "content": msg}], state
 
 def load_environment(**kwargs) -> vf.Environment:
