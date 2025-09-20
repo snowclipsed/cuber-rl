@@ -144,10 +144,7 @@ Rules:
 - Multiple moves separated by spaces
 - Use <move></move> if cube is already solved
 
-Format for N moves: <move> Move1 Move2 Move3 ... Move N</move>
-Example format for 4 moves: <move>R U R' F2</move> (this means: right clockwise, top clockwise, right counter, front 180°)
-
-Be concise and only respond with moves in proper format and no other text."""
+Think simply and do not overcomplicate. Be concise and only respond with moves in proper format and no other text."""
 
 # Episode Setup
 def prepare_episode(x, difficulties=['easy', 'medium'], max_moves_per_turn=3, max_steps=20):
