@@ -234,15 +234,15 @@ class RubiksCubeEnv(vf.MultiTurnEnv):
         
         return [{"role": "user", "content": msg}], state
 
-def load_environment(**kwargs) -> vf.Environment:
+def load_environment(difficulties=['easy', 'medium'], max_moves_per_turn=3, max_episode_steps=20) -> vf.Environment:
     """Load Rubik's Cube RL environment"""
     dataset = Dataset.from_dict({'episode': range(1000)})
     dataset = dataset.map(
         lambda x: prepare_episode(
             x, 
-            kwargs.get('difficulties', ['easy', 'medium']),
-            kwargs.get('max_moves_per_turn', 3),
-            kwargs.get('max_episode_steps', 20)
+            difficulties,
+            max_moves_per_turn,
+            max_episode_steps
         )
     )
     
@@ -255,4 +255,4 @@ def load_environment(**kwargs) -> vf.Environment:
     
     rubric = vf.Rubric(parser=parser, funcs=[reward_func])
     
-    return RubiksCubeEnv(dataset=dataset, parser=parser, rubric=rubric, **kwargs)
+    return RubiksCubeEnv(dataset=dataset, parser=parser, rubric=rubric)
