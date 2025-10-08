@@ -123,11 +123,23 @@ def parse_response(response: str) -> Optional[List[str]]:
             return moves
     return None
 
-def generate_prompt(state: CubeState, max_moves: int) -> str:
+def generate_prompt(state: CubeState, max_moves: int, distance: int = None) -> str:
     """Generate task prompt"""
+    solved_display = """TOP(U): WWW/WWW/WWW
+LEFT(L): OOO/OOO/OOO
+FRONT(F): GGG/GGG/GGG
+RIGHT(R): RRR/RRR/RRR
+BACK(B): BBB/BBB/BBB
+BOTTOM(D): YYY/YYY/YYY"""
+    
+    dist_info = f" ({distance} moves from solved)" if distance is not None else ""
+    
     return f"""You are solving a 3x3 Rubik's cube.
 
-Current state:
+Solved cube:
+{solved_display}
+
+Current state{dist_info}:
 {state.to_string()}
 
 Task: Provide up to {max_moves} moves to make progress toward solving this cube.
@@ -152,16 +164,17 @@ def prepare_episode(x, difficulties=['easy', 'medium'], max_moves_per_turn=3, ma
     solver = Solver()
     difficulty = random.choice(difficulties)
     state = generate_scramble(difficulty)
+    initial_dist = solver.distance(state)
     
     x["task"] = "rubiks-cube"
     x["info"] = {
         "cube": state.faces,
-        "initial_dist": solver.distance(state),
+        "initial_dist": initial_dist,
         "max_turns": math.ceil(max_steps / max_moves_per_turn),
         "max_moves": max_moves_per_turn,
         "difficulty": difficulty
     }
-    x["prompt"] = [{"role": "user", "content": generate_prompt(state, max_moves_per_turn)}]
+    x["prompt"] = [{"role": "user", "content": generate_prompt(state, max_moves_per_turn, initial_dist)}]
     return x
 
 class RubiksCubeEnv(vf.MultiTurnEnv):
@@ -221,12 +234,17 @@ class RubiksCubeEnv(vf.MultiTurnEnv):
         moves = moves[:info['max_moves']]
         current = CubeState(info['cube'])
         phi_old = self.potential(current)
-        
+        initial_dist = self.solver.distance(current)
+
         new_cube = apply_sequence(current, moves)
         phi_new = self.potential(new_cube)
+        final_dist = self.solver.distance(new_cube)
+
+        # PBRS shaped reward only
         shaped_reward = float(self.gamma) * phi_new - float(phi_old)
         turn_reward += shaped_reward
 
+        # Update state
         info['cube'] = new_cube.faces
         state['reward'] = turn_reward
         state['total_reward'] = state.get('total_reward', 0.0) + turn_reward
@@ -235,7 +253,7 @@ class RubiksCubeEnv(vf.MultiTurnEnv):
             state['total_reward'] += 1.0 + (1.0 / max(1, state.get('turn', 1)))
             return [{"role": "user", "content": f"Solved! Reward: {state['total_reward']:.2f}"}], state
 
-        msg = f"""Moves: {' '.join(moves)} | Reward: {turn_reward:.4f}
+        msg = f"""Moves: {' '.join(moves)} | Reward: {turn_reward:.4f} | Change in distance from solved state: {initial_dist} → {final_dist}
 
         Current state:
         {new_cube.to_string()}
