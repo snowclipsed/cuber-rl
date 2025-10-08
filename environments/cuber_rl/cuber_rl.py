@@ -167,71 +167,95 @@ def prepare_episode(x, difficulties=['easy', 'medium'], max_moves_per_turn=3, ma
 class RubiksCubeEnv(vf.MultiTurnEnv):
     """Multi-turn Rubik's cube environment"""
     
-    def __init__(self, **kwargs):
+    def __init__(self, gamma: float = 0.99, potential_scale: float = 0.5, **kwargs):
         super().__init__(**kwargs)
         self.solver = Solver()
+        self.gamma = gamma
+        self.potential_scale = potential_scale
     
+    def potential(self, cube_state: CubeState) -> float:
+        """Potential function Φ(s) = -scale * distance(s). Must be state-only."""
+        try:
+            dist = self.solver.distance(cube_state)
+            return -float(dist) * float(self.potential_scale)
+        except Exception:
+            #TODO : Improve fallback robustness
+            return -20.0 * float(self.potential_scale)
+        
     def is_completed(self, messages: Messages, state: State, **kwargs) -> bool:
         """Check episode termination"""
         cube = CubeState(state['info'].get('cube'))
         return cube.is_solved() or state['turn'] >= state['info'].get('max_turns', 10)
     
     def env_response(self, messages: Messages, state: State, **kwargs) -> Tuple[Messages, State]:
-        """Process turn and calculate rewards"""
+        """Process turn and calculate rewards (now with PBRS shaping)"""
         if not messages or messages[-1]['role'] != 'assistant':
             return [], state
-        
+
         info = state['info']
         response = messages[-1]['content']
         moves = parse_response(response)
-        
-        turn_reward = 0
-        
-        # Format reward
+
+        turn_reward = 0.0
+
+        # Format & validity reward
         if moves is not None:
             turn_reward += 0.1
         else:
-            state['reward'] = 0
-            state['total_reward'] = state.get('total_reward', 0)
+            state['reward'] = 0.0
+            state['total_reward'] = state.get('total_reward', 0.0)
             msg = "Invalid format. Use <move>...</move> tags. Format for N moves: <move> Move1 Move2 Move3 ... Move N</move>"
             return [{"role": "user", "content": msg}], state
-        
-        # Handle no moves
+
+        # No-op handling
         if not moves:
-            state['reward'] = turn_reward
-            state['total_reward'] = state.get('total_reward', 0) + turn_reward
+            # shaped reward for no-op: still compute potential change between identical states (zero)
             current = CubeState(info['cube'])
+            shaped = self.gamma * self.potential(current) - self.potential(current)
+            turn_reward += shaped
+            state['reward'] = turn_reward
+            state['total_reward'] = state.get('total_reward', 0.0) + turn_reward
             msg = f"No moves executed.\n\nCurrent state:\n{current.to_string()}"
             return [{"role": "user", "content": msg}], state
-        
-        # Execute moves
+
+        # Execute moves (clamped)
         moves = moves[:info['max_moves']]
         current = CubeState(info['cube'])
         initial_dist = self.solver.distance(current)
+
+        # compute potential before taking action
+        phi_old = self.potential(current)
+
         new_cube = apply_sequence(current, moves)
         final_dist = self.solver.distance(new_cube)
-        
-        # Progress reward
+
+        # Progress reward (as before, clamped non-negative)
         if initial_dist > 0:
-            progress = max(0, (initial_dist - final_dist) / initial_dist) # we clamp to zero to avoid negative rewards
+            progress = max(0.0, (initial_dist - final_dist) / initial_dist)
             turn_reward += progress
-        
+
+        # compute potential after taking action and shaped reward
+        phi_new = self.potential(new_cube)
+        shaped_reward = float(self.gamma) * phi_new - float(phi_old)
+        turn_reward += shaped_reward
+
+        # update state and totals
         info['cube'] = new_cube.faces
         state['reward'] = turn_reward
-        state['total_reward'] = state.get('total_reward', 0) + turn_reward
-        
+        state['total_reward'] = state.get('total_reward', 0.0) + turn_reward
+
         if new_cube.is_solved():
-            # Success reward + efficiency reward
-            state['total_reward'] += 1.0 + (1.0 / state['turn'])
+            # terminal success + efficiency bonus (these are part of original reward structure)
+            state['total_reward'] += 1.0 + (1.0 / max(1, state.get('turn', 1)))
             return [{"role": "user", "content": f"Solved! Reward: {state['total_reward']:.2f}"}], state
-        
-        msg = f"""Moves: {' '.join(moves)} | Reward: {turn_reward:.2f}
 
-    Current state:
-    {new_cube.to_string()}
+        msg = f"""Moves: {' '.join(moves)} | Reward: {turn_reward:.4f}
 
-    Provide up to {info['max_moves']} moves using <move>...</move> tags. Only respond with moves. Format for N moves: <move> Move1 Move2 Move3 ... Move N</move>"""
-        
+        Current state:
+        {new_cube.to_string()}
+
+        Provide up to {info['max_moves']} moves using <move>...</move> tags. Only respond with moves. Format for N moves: <move> Move1 Move2 Move3 ... Move N</move>"""
+
         return [{"role": "user", "content": msg}], state
 
 def load_environment(difficulties=['easy', 'medium'], max_moves_per_turn=3, max_episode_steps=20) -> vf.Environment:
