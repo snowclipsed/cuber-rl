@@ -188,7 +188,7 @@ class RubiksCubeEnv(vf.MultiTurnEnv):
         return cube.is_solved() or state['turn'] >= state['info'].get('max_turns', 10)
     
     def env_response(self, messages: Messages, state: State, **kwargs) -> Tuple[Messages, State]:
-        """Process turn and calculate rewards (now with PBRS shaping)"""
+        """Process turn and calculate rewards with PBRS shaping"""
         if not messages or messages[-1]['role'] != 'assistant':
             return [], state
 
@@ -209,7 +209,6 @@ class RubiksCubeEnv(vf.MultiTurnEnv):
 
         # No-op handling
         if not moves:
-            # shaped reward for no-op: still compute potential change between identical states (zero)
             current = CubeState(info['cube'])
             shaped = self.gamma * self.potential(current) - self.potential(current)
             turn_reward += shaped
@@ -218,34 +217,21 @@ class RubiksCubeEnv(vf.MultiTurnEnv):
             msg = f"No moves executed.\n\nCurrent state:\n{current.to_string()}"
             return [{"role": "user", "content": msg}], state
 
-        # Execute moves (clamped)
+        # Execute moves
         moves = moves[:info['max_moves']]
         current = CubeState(info['cube'])
-        initial_dist = self.solver.distance(current)
-
-        # compute potential before taking action
         phi_old = self.potential(current)
-
+        
         new_cube = apply_sequence(current, moves)
-        final_dist = self.solver.distance(new_cube)
-
-        # Progress reward (as before, clamped non-negative)
-        if initial_dist > 0:
-            progress = max(0.0, (initial_dist - final_dist) / initial_dist)
-            turn_reward += progress
-
-        # compute potential after taking action and shaped reward
         phi_new = self.potential(new_cube)
         shaped_reward = float(self.gamma) * phi_new - float(phi_old)
         turn_reward += shaped_reward
 
-        # update state and totals
         info['cube'] = new_cube.faces
         state['reward'] = turn_reward
         state['total_reward'] = state.get('total_reward', 0.0) + turn_reward
 
         if new_cube.is_solved():
-            # terminal success + efficiency bonus (these are part of original reward structure)
             state['total_reward'] += 1.0 + (1.0 / max(1, state.get('turn', 1)))
             return [{"role": "user", "content": f"Solved! Reward: {state['total_reward']:.2f}"}], state
 
