@@ -144,7 +144,7 @@ Rules:
 - Multiple moves separated by spaces
 - Use <move></move> if cube is already solved
 
-Think simply and do not overcomplicate. Be concise and only respond with moves in proper format and no other text."""
+Think simply and do not overcomplicate. Be concise and only respond with {max_moves} moves in proper format and no other text."""
 
 # Episode Setup
 def prepare_episode(x, difficulties=['easy', 'medium'], max_moves_per_turn=3, max_steps=20):
