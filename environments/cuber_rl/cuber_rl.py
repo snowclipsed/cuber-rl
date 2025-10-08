@@ -94,7 +94,7 @@ class Solver:
 
 def generate_scramble(difficulty: str) -> CubeState:
     """Generate scrambled cube at specified difficulty"""
-    ranges = {'very_easy': {1,3}, 'easy': (4, 8), 'medium': (9, 14), 'hard': (15, 20)}
+    ranges = {'very_easy': (1,3), 'easy': (4, 8), 'medium': (9, 14), 'hard': (15, 20)}
     n = random.randint(*ranges.get(difficulty, (1, 20)))
     
     moves = []
