@@ -6,22 +6,9 @@ from transformers import TrainerCallback
 
 wandb.init(project="cuber-rl", name="qwen3-4b-grpo-better-instuctions")
 
-# Simple callback to log rewards
-class RewardLoggingCallback(TrainerCallback):
-    def on_log(self, args, state, control, logs=None, **kwargs):
-        if logs and "rewards" in logs:
-            rewards = logs["rewards"]
-            if isinstance(rewards, (list, torch.Tensor)):
-                rewards_t = torch.tensor(rewards) if isinstance(rewards, list) else rewards
-                wandb.log({
-                    "reward/mean": rewards_t.mean().item(),
-                    "reward/max": rewards_t.max().item(),
-                    "reward/min": rewards_t.min().item(),
-                    "reward/std": rewards_t.std().item(),
-                }, step=state.global_step)
-
 model_name = "willcb/Qwen3-4B"
 model, tokenizer = vf.get_model_and_tokenizer(model_name)
+
 
 env = vf.load_environment(
     "cuber-rl",
@@ -46,10 +33,10 @@ training_args.save_steps = 10
 training_args.logging_steps = 1
 
 training_args.mask_env_responses = True
-training_args.max_grad_norm = 0.1
+training_args.max_grad_norm = 0.25
 training_args.beta = 0.00
 training_args.async_generation_timeout = 600
-training_args.learning_rate = 2e-6
+training_args.learning_rate = 5e-6
 training_args.warmup_ratio = 0.1
 training_args.fp16 = True
 training_args.gradient_checkpointing = True
@@ -61,7 +48,7 @@ trainer = vf.GRPOTrainer(
     processing_class=tokenizer,
     env=env,
     args=training_args,
-    callbacks=[RewardLoggingCallback()],  # Add callback here
+    peft_config=vf.lora_defaults()
 )
 
 trainer.train()
