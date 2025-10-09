@@ -153,8 +153,8 @@ Notation (Singmaster):
 
 Rules:
 - Put your moves in <move>...</move> tags
-- Multiple moves separated by spaces
-- Use <move></move> if cube is already solved
+- Do make moves which result in visiting the same state again.
+- Use <move></move> if cube is already solved.
 
 Think simply and do not overcomplicate. Be concise and only respond with {max_moves} moves in proper format and no other text."""
 
@@ -215,8 +215,8 @@ class RubiksCubeEnv(vf.MultiTurnEnv):
         if moves is not None:
             turn_reward += 0.1
         else:
-            state['reward'] = 0.0
-            state['total_reward'] = state.get('total_reward', 0.0)
+            state['reward'] = -0.2
+            state['total_reward'] = state.get('total_reward', 0.0) - 0.2
             msg = "Invalid format. Use <move>...</move> tags. Format for N moves: <move> Move1 Move2 Move3 ... Move N</move>"
             return [{"role": "user", "content": msg}], state
 
@@ -240,9 +240,21 @@ class RubiksCubeEnv(vf.MultiTurnEnv):
         phi_new = self.potential(new_cube)
         final_dist = self.solver.distance(new_cube)
 
-        # PBRS shaped reward only
+        # PBRS shaped reward
         shaped_reward = float(self.gamma) * phi_new - float(phi_old)
         turn_reward += shaped_reward
+
+        # State visitation penalty
+        # State visitation penalty
+        if 'visited_states' not in info:
+            info['visited_states'] = set()
+            info['visited_states'].add(current.to_kociemba())
+
+        state_hash = new_cube.to_kociemba()
+        revisited = state_hash in info['visited_states']
+        if revisited:
+            turn_reward -= 0.5
+        info['visited_states'].add(state_hash)
 
         # Update state
         info['cube'] = new_cube.faces
@@ -252,8 +264,8 @@ class RubiksCubeEnv(vf.MultiTurnEnv):
         if new_cube.is_solved():
             state['total_reward'] += 1.0 + (1.0 / max(1, state.get('turn', 1)))
             return [{"role": "user", "content": f"Solved! Reward: {state['total_reward']:.2f}"}], state
-
-        msg = f"""Moves: {' '.join(moves)} | Reward: {turn_reward:.4f} | Change in distance from solved state: {initial_dist} → {final_dist}
+        revisit_note = " [Revisited previous state: -0.5 penalty]" if revisited else ""
+        msg = f"""Moves: {' '.join(moves)} | Reward: {turn_reward:.4f} | Change in distance from solved state: {initial_dist} → {final_dist} | {revisit_note}
 
         Current state:
         {new_cube.to_string()}
