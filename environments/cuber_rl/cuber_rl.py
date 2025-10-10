@@ -32,12 +32,26 @@ class CubeState:
         return cls(faces)
     
     def to_string(self) -> str:
-        """Convert to display format"""
-        return '\n'.join(
-            f"{self.FACE_NAMES[f]}({f}): {self.faces[f][:3]}/{self.faces[f][3:6]}/{self.faces[f][6:9]}" 
-            for f in self.FACE_ORDER
-        )
-    
+        """Convert to unfolded net display format"""
+        u = self.faces['U']
+        l = self.faces['L']
+        f = self.faces['F']
+        r = self.faces['R']
+        b = self.faces['B']
+        d = self.faces['D']
+        
+        return f"""        {u[0]} {u[1]} {u[2]}
+            {u[3]} {u[4]} {u[5]}
+            {u[6]} {u[7]} {u[8]}
+
+    {l[0]} {l[1]} {l[2]}   {f[0]} {f[1]} {f[2]}   {r[0]} {r[1]} {r[2]}   {b[0]} {b[1]} {b[2]}
+    {l[3]} {l[4]} {l[5]}   {f[3]} {f[4]} {f[5]}   {r[3]} {r[4]} {r[5]}   {b[3]} {b[4]} {b[5]}
+    {l[6]} {l[7]} {l[8]}   {f[6]} {f[7]} {f[8]}   {r[6]} {r[7]} {r[8]}   {b[6]} {b[7]} {b[8]}
+
+            {d[0]} {d[1]} {d[2]}
+            {d[3]} {d[4]} {d[5]}
+            {d[6]} {d[7]} {d[8]}"""
+
     def to_magiccube(self) -> str:
         """Convert for magiccube library"""
         return ''.join(self.faces[f] for f in self.FACE_ORDER)
@@ -123,38 +137,38 @@ def parse_response(response: str) -> Optional[List[str]]:
             return moves
     return None
 
-def generate_prompt(state: CubeState, max_moves: int, distance: int = None) -> str:
+def generate_prompt(state: CubeState, max_moves: int) -> str:
     """Generate task prompt"""
-    solved_display = """TOP(U): WWW/WWW/WWW
-LEFT(L): OOO/OOO/OOO
-FRONT(F): GGG/GGG/GGG
-RIGHT(R): RRR/RRR/RRR
-BACK(B): BBB/BBB/BBB
-BOTTOM(D): YYY/YYY/YYY"""
-    
-    dist_info = f" ({distance} moves from solved)" if distance is not None else ""
-    
     return f"""You are solving a 3x3 Rubik's cube.
 
-Solved cube:
-{solved_display}
+Solved state (goal):
+        W W W
+        W W W
+        W W W
 
-Current state{dist_info}:
+O O O   G G G   R R R   B B B
+O O O   G G G   R R R   B B B
+O O O   G G G   R R R   B B B
+
+        Y Y Y
+        Y Y Y
+        Y Y Y
+
+Current state:
 {state.to_string()}
 
 Task: Provide up to {max_moves} moves to make progress toward solving this cube.
 
 Notation (Singmaster):
-- Each letter represents rotating one face of the cube
 - U (Up/top), D (Down/bottom), L (Left), R (Right), F (Front), B (Back)
-- Single letter = rotate that face 90° clockwise (when looking at that face)
-- Letter + ' = rotate that face 90° counterclockwise (e.g., U' rotates top counterclockwise)
-- Letter + 2 = rotate that face 180° (e.g., F2 rotates front 180°)
+- Single letter = rotate that face 90° clockwise
+- Letter + ' = rotate 90° counterclockwise (e.g., U')
+- Letter + 2 = rotate 180° (e.g., F2)
 
 Rules:
 - Put your moves in <move>...</move> tags
-- Do make moves which result in visiting the same state again.
-- Use <move></move> if cube is already solved.
+- Multiple moves separated by spaces
+- Use <move></move> if cube is already solved
 
 Think simply and do not overcomplicate. Be concise and only respond with {max_moves} moves in proper format and no other text."""
 
