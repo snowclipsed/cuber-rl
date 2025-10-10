@@ -40,17 +40,18 @@ class CubeState:
         b = self.faces['B']
         d = self.faces['D']
         
-        return f"""        {u[0]} {u[1]} {u[2]}
-            {u[3]} {u[4]} {u[5]}
-            {u[6]} {u[7]} {u[8]}
+        return f"""
+        {u[0]} {u[1]} {u[2]}
+        {u[3]} {u[4]} {u[5]}
+        {u[6]} {u[7]} {u[8]}
 
-    {l[0]} {l[1]} {l[2]}   {f[0]} {f[1]} {f[2]}   {r[0]} {r[1]} {r[2]}   {b[0]} {b[1]} {b[2]}
-    {l[3]} {l[4]} {l[5]}   {f[3]} {f[4]} {f[5]}   {r[3]} {r[4]} {r[5]}   {b[3]} {b[4]} {b[5]}
-    {l[6]} {l[7]} {l[8]}   {f[6]} {f[7]} {f[8]}   {r[6]} {r[7]} {r[8]}   {b[6]} {b[7]} {b[8]}
+{l[0]} {l[1]} {l[2]}   {f[0]} {f[1]} {f[2]}   {r[0]} {r[1]} {r[2]}   {b[0]} {b[1]} {b[2]}
+{l[3]} {l[4]} {l[5]}   {f[3]} {f[4]} {f[5]}   {r[3]} {r[4]} {r[5]}   {b[3]} {b[4]} {b[5]}
+{l[6]} {l[7]} {l[8]}   {f[6]} {f[7]} {f[8]}   {r[6]} {r[7]} {r[8]}   {b[6]} {b[7]} {b[8]}
 
-            {d[0]} {d[1]} {d[2]}
-            {d[3]} {d[4]} {d[5]}
-            {d[6]} {d[7]} {d[8]}"""
+        {d[0]} {d[1]} {d[2]}
+        {d[3]} {d[4]} {d[5]}
+        {d[6]} {d[7]} {d[8]}"""
 
     def to_magiccube(self) -> str:
         """Convert for magiccube library"""
@@ -137,8 +138,10 @@ def parse_response(response: str) -> Optional[List[str]]:
             return moves
     return None
 
-def generate_prompt(state: CubeState, max_moves: int) -> str:
+def generate_prompt(state: CubeState, max_moves: int, distance: int = None) -> str:
     """Generate task prompt"""
+    dist_info = f" ({distance} moves from solved)" if distance is not None else ""
+    
     return f"""You are solving a 3x3 Rubik's cube.
 
 Solved state (goal):
@@ -154,7 +157,7 @@ O O O   G G G   R R R   B B B
         Y Y Y
         Y Y Y
 
-Current state:
+Current state{dist_info}:
 {state.to_string()}
 
 Task: Provide up to {max_moves} moves to make progress toward solving this cube.
