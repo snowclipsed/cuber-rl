@@ -1,47 +1,30 @@
-import os
-import torch
+import argparse
+import json
 import verifiers as vf
 import wandb
-from transformers import TrainerCallback
 
-wandb.init(project="cuber-rl", name="qwen3-4b-grpo-better-instuctions")
+parser = argparse.ArgumentParser()
+parser.add_argument('-c', '--config', required=True)
+args = parser.parse_args()
 
-model_name = "willcb/Qwen3-4B"
-model, tokenizer = vf.get_model_and_tokenizer(model_name)
+with open(args.config) as f:
+    cfg = json.load(f)
 
+wandb.init(project=cfg['wandb_project'], name=cfg['wandb_name'])
+
+model, tokenizer = vf.get_model_and_tokenizer(cfg['model_name'])
 
 env = vf.load_environment(
-    "cuber-rl",
-    difficulties=['very_easy'],
-    max_moves_per_turn=1,
-    max_episode_steps=8
+    cfg['env_name'],
+    difficulties=cfg['difficulties'],
+    max_moves_per_turn=cfg['max_moves_per_turn'],
+    max_episode_steps=cfg['max_episode_steps']
 )
 
-run_name = "rubiks-cube-grpo-qwen3b"
-training_args = vf.grpo_defaults(run_name=run_name)
+training_args = vf.grpo_defaults(run_name=cfg['run_name'])
 
-training_args.per_device_train_batch_size = 4
-training_args.num_generations = 8
-training_args.gradient_accumulation_steps = 4
-training_args.max_tokens = 2048
-training_args.max_seq_len = 4096
-
-training_args.max_steps = 100
-training_args.eval_strategy = "steps"
-training_args.eval_steps = 2
-training_args.save_steps = 10
-training_args.logging_steps = 1
-
-training_args.mask_env_responses = True
-training_args.max_grad_norm = 0.25
-training_args.beta = 0.00
-training_args.async_generation_timeout = 600
-training_args.learning_rate = 5e-6
-training_args.warmup_ratio = 0.1
-training_args.fp16 = True
-training_args.gradient_checkpointing = True
-training_args.output_dir = "./rubiks_cube_checkpoints"
-training_args.report_to = "wandb"
+for k, v in cfg['training_args'].items():
+    setattr(training_args, k, v)
 
 trainer = vf.GRPOTrainer(
     model=model,
@@ -52,4 +35,4 @@ trainer = vf.GRPOTrainer(
 )
 
 trainer.train()
-trainer.save_model("./final_rubiks_model")
+trainer.save_model(cfg['output_model_path'])

@@ -1,0 +1,33 @@
+{
+  "wandb_project": "cuber-rl",
+  "wandb_name": "qwen3-4b-thinking-lora-peft",
+  "model_name": "willcb/Qwen3-4B",
+  "env_name": "cuber-rl",
+  "difficulties": ["very_easy"],
+  "max_moves_per_turn": 1,
+  "max_episode_steps": 8,
+  "run_name": "rubiks-cube-grpo-qwen3b",
+  "output_model_path": "./final_rubiks_model",
+  "training_args": {
+    "per_device_train_batch_size": 4,
+    "num_generations": 8,
+    "gradient_accumulation_steps": 4,
+    "max_tokens": 2048,
+    "max_seq_len": 4096,
+    "max_steps": 100,
+    "eval_strategy": "steps",
+    "eval_steps": 2,
+    "save_steps": 10,
+    "logging_steps": 1,
+    "mask_env_responses": true,
+    "max_grad_norm": 0.25,
+    "beta": 0.0,
+    "async_generation_timeout": 600,
+    "learning_rate": 5e-6,
+    "warmup_ratio": 0.1,
+    "fp16": true,
+    "gradient_checkpointing": true,
+    "output_dir": "./rubiks_cube_checkpoints",
+    "report_to": "wandb"
+  }
+}
