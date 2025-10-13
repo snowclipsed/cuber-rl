@@ -1,2 +1,2 @@
 # cuber-rl
-An environment to solve a Rubik's Cube with RL
+An environment to solve a Rubik's Cube with RL. In progress! 
