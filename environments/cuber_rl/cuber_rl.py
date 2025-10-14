@@ -197,92 +197,85 @@ def prepare_episode(x, difficulties=['easy', 'medium'], max_moves_per_turn=3, ma
 class RubiksCubeEnv(vf.MultiTurnEnv):
     """Multi-turn Rubik's cube environment"""
     
-    def __init__(self, gamma: float = 0.99, potential_scale: float = 0.5, **kwargs):
+    def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.solver = Solver()
-        self.gamma = gamma
-        self.potential_scale = potential_scale
     
-    def potential(self, cube_state: CubeState) -> float:
-        """Potential function Φ(s) = -scale * distance(s). Must be state-only."""
-        try:
-            dist = self.solver.distance(cube_state)
-            return -float(dist) * float(self.potential_scale)
-        except Exception:
-            #TODO : Improve fallback robustness
-            return -20.0 * float(self.potential_scale)
-        
     def is_completed(self, messages: Messages, state: State, **kwargs) -> bool:
         """Check episode termination"""
         cube = CubeState(state['info'].get('cube'))
         return cube.is_solved() or state['turn'] >= state['info'].get('max_turns', 10)
     
     def env_response(self, messages: Messages, state: State, **kwargs) -> Tuple[Messages, State]:
-        """Process turn and calculate rewards with PBRS shaping"""
+        """Process turn and calculate rewards with positive-only structure"""
         if not messages or messages[-1]['role'] != 'assistant':
             return [], state
 
         info = state['info']
         response = messages[-1]['content']
-        moves = parse_response(response)
+        moves = parse_moves(response)
 
         turn_reward = 0.0
 
-        # Format & validity reward
+        # Format reward
         if moves is not None:
             turn_reward += 0.1
         else:
-            state['reward'] = -0.2
-            state['total_reward'] = state.get('total_reward', 0.0) - 0.2
+            state['reward'] = 0.0
+            state['total_reward'] = state.get('total_reward', 0.0)
             msg = "Invalid format. Use <move>...</move> tags. Format for N moves: <move> Move1 Move2 Move3 ... Move N</move>"
             return [{"role": "user", "content": msg}], state
 
+        # Track initial distance
+        if 'initial_distance' not in info:
+            current = CubeState(info['cube'])
+            info['initial_distance'] = self.solver.distance(current)
+
+        d = info['initial_distance']
+
         # No-op handling
         if not moves:
-            current = CubeState(info['cube'])
-            shaped = self.gamma * self.potential(current) - self.potential(current)
-            turn_reward += shaped
             state['reward'] = turn_reward
             state['total_reward'] = state.get('total_reward', 0.0) + turn_reward
+            current = CubeState(info['cube'])
             msg = f"No moves executed.\n\nCurrent state:\n{current.to_string()}"
             return [{"role": "user", "content": msg}], state
 
         # Execute moves
         moves = moves[:info['max_moves']]
         current = CubeState(info['cube'])
-        phi_old = self.potential(current)
-        initial_dist = self.solver.distance(current)
-
         new_cube = apply_sequence(current, moves)
-        phi_new = self.potential(new_cube)
-        final_dist = self.solver.distance(new_cube)
+        final_distance = self.solver.distance(new_cube)
 
-        # PBRS shaped reward
-        shaped_reward = float(self.gamma) * phi_new - float(phi_old)
-        turn_reward += shaped_reward
+        turns_used = state.get('turn', 1)
 
-        # State visitation penalty
-        # State visitation penalty
-        if 'visited_states' not in info:
-            info['visited_states'] = set()
-            info['visited_states'].add(current.to_kociemba())
-
-        state_hash = new_cube.to_kociemba()
-        revisited = state_hash in info['visited_states']
-        if revisited:
-            turn_reward -= 0.5
-        info['visited_states'].add(state_hash)
+        # Calculate rewards based on solved status
+        if new_cube.is_solved():
+            solve_reward = 1.0
+            efficiency_ratio = min(1.0, d / turns_used)
+            efficiency_reward = efficiency_ratio
+            distance_reward = 0.0
+            
+            turn_reward += solve_reward + efficiency_reward + distance_reward
+            info['cube'] = new_cube.faces
+            state['reward'] = turn_reward
+            state['total_reward'] = state.get('total_reward', 0.0) + turn_reward
+            return [{"role": "user", "content": f"Solved! Reward: {state['total_reward']:.2f}"}], state
+        else:
+            solve_reward = 0.0
+            efficiency_reward = 0.0
+            net_reduction = max(0, d - final_distance)
+            progress_ratio = net_reduction / d if d > 0 else 0.0
+            distance_reward = progress_ratio
+            
+            turn_reward += distance_reward
 
         # Update state
         info['cube'] = new_cube.faces
         state['reward'] = turn_reward
         state['total_reward'] = state.get('total_reward', 0.0) + turn_reward
 
-        if new_cube.is_solved():
-            state['total_reward'] += 1.0 + (1.0 / max(1, state.get('turn', 1)))
-            return [{"role": "user", "content": f"Solved! Reward: {state['total_reward']:.2f}"}], state
-        revisit_note = " [Revisited previous state: -0.5 penalty]" if revisited else ""
-        msg = f"""Moves: {' '.join(moves)} | Reward: {turn_reward:.4f} | Change in distance from solved state: {initial_dist} → {final_dist} | {revisit_note}
+        msg = f"""Moves: {' '.join(moves)} | Reward: {turn_reward:.4f} | Distance from solved: {final_distance}
 
         Current state:
         {new_cube.to_string()}
@@ -290,7 +283,6 @@ class RubiksCubeEnv(vf.MultiTurnEnv):
         Provide up to {info['max_moves']} moves using <move>...</move> tags. Only respond with moves. Format for N moves: <move> Move1 Move2 Move3 ... Move N</move>"""
 
         return [{"role": "user", "content": msg}], state
-
 def load_environment(difficulties=['easy', 'medium'], max_moves_per_turn=3, max_episode_steps=20) -> vf.Environment:
     """Load Rubik's Cube RL environment"""
     dataset = Dataset.from_dict({'episode': range(1000)})
