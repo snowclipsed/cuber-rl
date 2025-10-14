@@ -1,10 +1,9 @@
-
 {
   "wandb_project": "cuber-rl",
   "wandb_name": "qwen2-1.5b-lora-peft",
   "model_name": "Qwen/Qwen2.5-1.5B-Instruct",
   "env_name": "cuber-rl",
-  "difficulties": ["very_easy"],
+  "scramble_ranges": [[0, 1]],
   "max_moves_per_turn": 1,
   "max_episode_steps": 8,
   "run_name": "rubiks-cube-grpo-qwen3b",

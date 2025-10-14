@@ -16,7 +16,7 @@ model, tokenizer = vf.get_model_and_tokenizer(cfg['model_name'])
 
 env = vf.load_environment(
     cfg['env_name'],
-    difficulties=cfg['difficulties'],
+    scramble_ranges=cfg['scramble_ranges'],
     max_moves_per_turn=cfg['max_moves_per_turn'],
     max_episode_steps=cfg['max_episode_steps']
 )
