@@ -107,10 +107,9 @@ class Solver:
         except:
             return 20
 
-def generate_scramble(difficulty: str) -> CubeState:
-    """Generate scrambled cube at specified difficulty"""
-    ranges = {'very_easy': (1,3), 'easy': (4, 8), 'medium': (9, 14), 'hard': (15, 20)}
-    n = random.randint(*ranges.get(difficulty, (1, 20)))
+def generate_scramble(scramble_range: Tuple[int, int]) -> CubeState:
+    """Generate scrambled cube with moves in specified range"""
+    n = random.randint(*scramble_range)
     
     moves = []
     last = None
@@ -176,11 +175,11 @@ Rules:
 Think simply and do not overcomplicate. Be concise and only respond with {max_moves} moves in proper format and no other text."""
 
 # Episode Setup
-def prepare_episode(x, difficulties=['easy', 'medium'], max_moves_per_turn=3, max_steps=20):
+def prepare_episode(x, scramble_ranges=[(1, 3), (4, 12)], max_moves_per_turn=3, max_steps=20):
     """Initialize episode with scrambled cube"""
     solver = Solver()
-    difficulty = random.choice(difficulties)
-    state = generate_scramble(difficulty)
+    scramble_range = random.choice(scramble_ranges)
+    state = generate_scramble(scramble_range)
     initial_dist = solver.distance(state)
     
     x["task"] = "rubiks-cube"
@@ -189,7 +188,7 @@ def prepare_episode(x, difficulties=['easy', 'medium'], max_moves_per_turn=3, ma
         "initial_dist": initial_dist,
         "max_turns": math.ceil(max_steps / max_moves_per_turn),
         "max_moves": max_moves_per_turn,
-        "difficulty": difficulty
+        "scramble_range": scramble_range
     }
     x["prompt"] = [{"role": "user", "content": generate_prompt(state, max_moves_per_turn, initial_dist)}]
     return x
@@ -284,13 +283,13 @@ class RubiksCubeEnv(vf.MultiTurnEnv):
 
         return [{"role": "user", "content": msg}], state
 
-def load_environment(difficulties=['easy', 'medium'], max_moves_per_turn=3, max_episode_steps=20) -> vf.Environment:
+def load_environment(scramble_ranges=[(4, 8), (9, 14)], max_moves_per_turn=3, max_episode_steps=20) -> vf.Environment:
     """Load Rubik's Cube RL environment"""
     dataset = Dataset.from_dict({'episode': range(1000)})
     dataset = dataset.map(
         lambda x: prepare_episode(
             x, 
-            difficulties,
+            scramble_ranges,
             max_moves_per_turn,
             max_episode_steps
         )
