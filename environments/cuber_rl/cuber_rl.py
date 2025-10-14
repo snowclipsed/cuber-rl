@@ -128,13 +128,18 @@ def generate_scramble(scramble_range: Tuple[int, int]) -> CubeState:
 
 def parse_response(response: str) -> Optional[List[str]]:
     """Extract moves from LLM response"""
-    if m := re.search(r'<move>(.*?)</move>', response, re.DOTALL):
-        content = m.group(1).strip()
-        if content == "":
-            return []
-        moves = parse_moves(content)
-        if moves and validate_moves(moves):
-            return moves
+    matches = re.findall(r'<move>(.*?)</move>', response, re.DOTALL)
+    
+    if not matches:
+        return None
+    
+    content = matches[-1].strip()
+    if content == "":
+        return []
+    
+    moves = parse_moves(content)
+    if moves and validate_moves(moves):
+        return moves
     return None
 
 def generate_prompt(state: CubeState, max_moves: int, distance: int = None) -> str:
