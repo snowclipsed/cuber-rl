@@ -283,6 +283,7 @@ class RubiksCubeEnv(vf.MultiTurnEnv):
         Provide up to {info['max_moves']} moves using <move>...</move> tags. Only respond with moves. Format for N moves: <move> Move1 Move2 Move3 ... Move N</move>"""
 
         return [{"role": "user", "content": msg}], state
+
 def load_environment(difficulties=['easy', 'medium'], max_moves_per_turn=3, max_episode_steps=20) -> vf.Environment:
     """Load Rubik's Cube RL environment"""
     dataset = Dataset.from_dict({'episode': range(1000)})
