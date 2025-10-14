@@ -212,7 +212,7 @@ class RubiksCubeEnv(vf.MultiTurnEnv):
 
         info = state['info']
         response = messages[-1]['content']
-        moves = parse_moves(response)
+        moves = parse_response(response)
 
         turn_reward = 0.0
 
