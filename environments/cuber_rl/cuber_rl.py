@@ -206,9 +206,9 @@ class RubiksCubeEnv(vf.MultiTurnEnv):
         self.solver = Solver()
     
     def is_completed(self, messages: Messages, state: State, **kwargs) -> bool:
-        """Check episode termination"""
         cube = CubeState(state['info'].get('cube'))
-        return cube.is_solved() or state['turn'] >= state['info'].get('max_turns', 10)
+        # Check if we've processed max_turns, not if we're about to process it
+        return cube.is_solved() or state['turn'] > state['info'].get('max_turns', 10)
     
     def env_response(self, messages: Messages, state: State, **kwargs) -> Tuple[Messages, State]:
         """Process turn and calculate rewards with positive-only structure"""
