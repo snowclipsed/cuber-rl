@@ -148,17 +148,18 @@ def generate_prompt(state: CubeState, max_moves: int, distance: int = None) -> s
     
     return f"""You are solving a 3x3 Rubik's cube.
 
-Solved state (goal):
-        W W W
-        W W W
-        W W W
+GOAL (Solved):
+        W W W        
+        W W W   TOP
+        W W W        
 
 O O O   G G G   R R R   B B B
 O O O   G G G   R R R   B B B
 O O O   G G G   R R R   B B B
+LEFT    FRONT   RIGHT   BACK
 
         Y Y Y
-        Y Y Y
+        Y Y Y   BOTTOM
         Y Y Y
 
 Current state{dist_info}:
