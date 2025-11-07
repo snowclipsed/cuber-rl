@@ -97,7 +97,7 @@ Reward: 0.4 | Distance: 3
 
 ### Evaluation Reports
 
-#### Model Performance (Pass@5, 10 puzzles episodes, Difficulty = ![alt text](<Pasted image 20251104172105.png>)1 Move from Solved)
+#### Model Performance (Pass@5, 10 puzzles episodes, Difficulty = 1 Move from Solved, No format reward)
 
 | Model | Avg Reward / 2.0 | Solves / 50 | Equiv. % |
 |-------|------------------|-------------|----------|
@@ -108,8 +108,14 @@ Reward: 0.4 | Distance: 3
 | Kimi k2 | 0.04 | 1 | 2% |
 | Qwen-235B | 0.00 | 0 | 0% |
 
-#### Performance by Scramble Difficulty
+#### Performance by Scramble Difficulty (No Format Reward)
 
-![Rubik's Cube Solving Performance](performance.png)
+| Moves from Solved | GPT-5-nano | GPT-5-mini | GPT-5 |
+|-------------------|------------|------------|-------|
+| 1 | 0.920 | 1.120 | 1.200 |
+| 2 | 0.020 | 0.120 | 1.220 |
+| 3 | 0.033 | 0.000 | 1.125 |
+| 4 | 0.010 | 0.000 | 0.820 |
+| 5 | 0.000 | 0.000 | 0.500 |
 
-The graph shows adjusted reward scores across different scramble difficulties (1-5 moves from solved). GPT-5 maintains strong performance even on harder scrambles, while smaller models struggle significantly as difficulty increases. The sharp drop-off for GPT-5-nano and GPT-5-mini after 2 moves suggests these models lack the spatial reasoning needed for multi-step cube solving.
+GPT-5 maintains strong performance across all difficulty levels, while GPT-5-mini and GPT-5-nano show sharp degradation beyond simple 1-2 move scrambles, suggesting limited spatial reasoning capabilities for multi-step cube solving.
