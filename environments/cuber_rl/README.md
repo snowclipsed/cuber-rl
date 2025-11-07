@@ -1,21 +1,24 @@
 # cuber-rl
 
-> Replace the placeholders below, then remove this callout. Keep the Evaluation Reports section at the bottom intact so reports can auto-render.
-
 ### Overview
 - **Environment ID**: `cuber-rl`
-- **Short description**: <one-sentence description>
-- **Tags**: <comma-separated tags>
+- **Short description**: Multi-turn Rubik's cube solving environment with progressive reward shaping
+- **Tags**: rubiks-cube, multi-turn, puzzle-solving, reinforcement-learning
 
 ### Datasets
-- **Primary dataset(s)**: <name(s) and brief description>
-- **Source links**: <links>
-- **Split sizes**: <train/eval counts>
+- **Primary dataset(s)**: Procedurally generated scrambled cubes with configurable difficulty
+- **Source links**: N/A (synthetic generation via `magiccube` and random scrambling)
+- **Split sizes**: 1000 episodes (default), fully procedural so can be extended arbitrarily
 
 ### Task
-- **Type**: <single-turn | multi-turn | tool use>
-- **Parser**: <e.g., ThinkParser, XMLParser, custom>
-- **Rubric overview**: <briefly list reward functions and key metrics>
+- **Type**: Multi-turn
+- **Parser**: XML tag parser (extracts moves from `<move>...</move>` tags)
+- **Rubric overview**: 
+  - Solving reward: 1.0 for solving + efficiency bonus $\min(1.0, \frac{d}{t})$ where $d$ is initial distance and $t$ is turns used
+  - Progress reward: $\frac{\max(0, d - d')}{d}$ where $d'$ is distance after moves
+  - Format penalty: 0.0 for invalid responses
+
+The agent receives a scrambled Rubik's cube and must provide sequences of moves in Singmaster notation (U, D, L, R, F, B with optional ', 2 modifiers) to solve it. Each turn allows up to `max_moves_per_turn` moves. Rewards are given for making progress toward the solved state and bonus rewards for efficiency when solving.
 
 ### Quickstart
 Run an evaluation with default settings:
@@ -27,25 +30,86 @@ uv run vf-eval cuber-rl
 Configure model and sampling:
 
 ```bash
-uv run vf-eval cuber-rl   -m gpt-4.1-mini   -n 20 -r 3 -t 1024 -T 0.7   -a '{"key": "value"}'  # env-specific args as JSON
+uv run vf-eval cuber-rl \
+  -m gpt-4.1-mini \
+  -n 20 -r 3 -t 1024 -T 0.7 \
+  -a '{"scramble_ranges": [[4, 8], [9, 14]], "max_moves_per_turn": 3, "max_episode_steps": 20}'
 ```
 
 Notes:
 - Use `-a` / `--env-args` to pass environment-specific configuration as a JSON object.
+- Easier scrambles (1-3 moves) are good for initial testing; harder scrambles (9-14 moves) require more strategic solving.
 
 ### Environment Arguments
-Document any supported environment arguments and their meaning. Example:
 
 | Arg | Type | Default | Description |
 | --- | ---- | ------- | ----------- |
-| `foo` | str | `"bar"` | What this controls |
-| `max_examples` | int | `-1` | Limit on dataset size (use -1 for all) |
+| `scramble_ranges` | List[Tuple[int, int]] | `[[4, 8], [9, 14]]` | List of (min, max) move ranges for scrambling. One range is randomly selected per episode. |
+| `max_moves_per_turn` | int | `3` | Maximum number of moves the agent can execute per turn. |
+| `max_episode_steps` | int | `20` | Maximum number of turns before episode terminates (actual max turns is `ceil(max_episode_steps / max_moves_per_turn)`). |
+
+### Mechanics
+
+**State Representation**: Cubes are displayed as unfolded nets showing all 6 faces (U=Top/White, L=Left/Orange, F=Front/Green, R=Right/Red, B=Back/Blue, D=Bottom/Yellow).
+
+**Move Notation**: Standard Singmaster notation where single letters rotate clockwise 90°, apostrophe (') rotates counterclockwise 90°, and 2 rotates 180°.
+
+**Response Format**: Agent must wrap moves in XML tags: `<move>U R' F2 D</move>`. Empty tags `<move></move>` indicate no moves (useful when cube is already solved).
+
+**Reward Structure**:
+- **Solving**: 1.0 base + efficiency bonus of $\min(1.0, \frac{\text{initial\_distance}}{\text{turns\_used}})$ 
+- **Progress**: $\frac{\text{distance\_reduced}}{\text{initial\_distance}}$ for each turn (only positive progress counts)
+- **Invalid format**: 0.0 reward for that turn
+
+**Distance Metric**: Uses Kociemba's algorithm to compute optimal move count to solved state (cached for efficiency).
 
 ### Metrics
-Summarize key metrics your rubric emits and how they’re interpreted.
 
 | Metric | Meaning |
 | ------ | ------- |
-| `reward` | Main scalar reward (weighted sum of criteria) |
-| `accuracy` | Exact match on target answer |
+| `reward` | Per-turn reward (progress or solving bonus) |
+| `total_reward` | Cumulative reward across entire episode |
+| `initial_dist` | Optimal moves needed from scrambled state |
+| `final_distance` | Moves remaining to solve at episode end |
+| `solved` | Boolean indicating if cube was solved |
 
+### Example Interaction
+
+```
+Initial State (5 moves from solved):
+        W W W
+        W R W
+        W W W
+        
+O O G   G G G   R O R   B B B
+O O O   G W G   R R R   B Y B
+O O O   G G G   R R R   B B B
+
+        Y Y Y
+        Y Y Y
+        Y Y O
+
+Agent: <move>U R' F</move>
+Reward: 0.4 | Distance: 3
+```
+
+---
+
+### Evaluation Reports
+
+#### Model Performance (Pass@5, 10 puzzles episodes, Difficulty = ![alt text](<Pasted image 20251104172105.png>)1 Move from Solved)
+
+| Model | Avg Reward / 2.0 | Solves / 50 | Equiv. % |
+|-------|------------------|-------------|----------|
+| GPT-5 | 1.76 | 44 | 88% |
+| Claude Sonnet 4.5 | 0.60 | 15 | 30% |
+| Claude Opus 4 | 0.36 | 9 | 18% |
+| Gemini 2.5 Flash | 0.20 | 5 | 10% |
+| Kimi k2 | 0.04 | 1 | 2% |
+| Qwen-235B | 0.00 | 0 | 0% |
+
+#### Performance by Scramble Difficulty
+
+![Rubik's Cube Solving Performance](performance.png)
+
+The graph shows adjusted reward scores across different scramble difficulties (1-5 moves from solved). GPT-5 maintains strong performance even on harder scrambles, while smaller models struggle significantly as difficulty increases. The sharp drop-off for GPT-5-nano and GPT-5-mini after 2 moves suggests these models lack the spatial reasoning needed for multi-step cube solving.
